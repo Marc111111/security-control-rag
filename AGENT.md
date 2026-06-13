@@ -47,6 +47,7 @@ instance. The `.ollama/` folder is ignored because model files are large binary 
 ```powershell
 python -m pip install -e ".[dev]"
 pytest
+python -m ruff check .
 .\scripts\setup_ollama.ps1
 security-rag ingest --source data/raw --db storage/chroma
 security-rag query --db storage/chroma --criteria "controls for ransomware risk"
@@ -60,6 +61,7 @@ security-rag query --db storage/chroma --criteria "controls for ransomware risk"
 - Runtime adapters may depend on optional heavy libraries such as ChromaDB, pypdf, python-docx,
   and openpyxl.
 - Add tests with every new behavior.
+- GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 
 ## PR Roadmap
 
@@ -73,3 +75,4 @@ security-rag query --db storage/chroma --criteria "controls for ransomware risk"
 
 Initial implementation is being built in `D:\projects\mike-test`.
 
+First draft PR: `https://github.com/Marc111111/security-control-rag/pull/1`.
