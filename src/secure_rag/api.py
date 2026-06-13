@@ -30,6 +30,7 @@ class RagService(Protocol):
         *,
         message: str,
         context: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> object:
         ...
@@ -39,14 +40,21 @@ class RagService(Protocol):
         *,
         message: str,
         context: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> list[object]:
         ...
 
 
+class ChatTurn(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant)$")
+    content: str = Field(..., min_length=1)
+
+
 class QueryRequest(BaseModel):
     message: str = Field(..., min_length=1)
     context: dict[str, Any] | None = None
+    history: list[ChatTurn] = Field(default_factory=list)
     top_k: int | None = Field(default=None, ge=1, le=30)
 
 
@@ -118,6 +126,7 @@ def create_app(service: RagService | None = None) -> FastAPI:
             answer = current.query(
                 message=request.message,
                 context=request.context,
+                history=[turn.model_dump() for turn in request.history],
                 top_k=request.top_k,
             )
         except Exception as exc:
@@ -138,6 +147,7 @@ def create_app(service: RagService | None = None) -> FastAPI:
             hits = current.retrieve(
                 message=request.message,
                 context=request.context,
+                history=[turn.model_dump() for turn in request.history],
                 top_k=request.top_k,
             )
         except Exception as exc:

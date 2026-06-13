@@ -19,7 +19,11 @@ class ControlRagEngine:
 
     def answer(self, criteria: str, *, top_k: int = 8) -> ControlAnswer:
         hits: list[RetrievalHit] = self.retriever.retrieve(criteria, top_k=top_k)
-        supported_hits = [hit for hit in hits if hit.score >= self.min_score]
+        supported_hits = [
+            hit
+            for hit in hits
+            if (hit.vector_score if hit.vector_score is not None else hit.score) >= self.min_score
+        ]
         sources = [_source_metadata(hit) for hit in supported_hits]
         if not supported_hits:
             return ControlAnswer(

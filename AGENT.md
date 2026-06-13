@@ -89,3 +89,20 @@ NIST CSF 2.0, Secure Controls Framework 2026.x, and CIS Controls v8.1 material. 
 downloaded standards files are ignored by Git; `standards/SOURCES.md` documents the source URLs
 and ingestion result. The local `storage/chroma` collection contains 22,801 records after standards
 ingestion.
+
+Also on 2026-06-13, a bad answer exposed three defects:
+
+- The web UI was stateless, so follow-up prompts such as "I want concrete controls" lost the
+  original ransomware-playbook context.
+- The toy test fixture was mixed into the production Chroma collection and polluted answers.
+- Semantic-only retrieval missed security-domain intent such as "playbook" meaning incident
+  response plan, roles, communication, exercises, and response procedures.
+
+Fixes applied:
+
+- The UI now sends conversation history to `POST /api/query`.
+- Retrieval filters `tests/fixtures` sources by default.
+- Retrieval expands common security terms and reranks by keyword overlap plus standards-source
+  priority.
+- The live Chroma collection was cleaned to remove the three sample fixture chunks, leaving 22,798
+  standards chunks.

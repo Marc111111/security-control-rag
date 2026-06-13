@@ -219,6 +219,7 @@
       const form = document.querySelector("#form");
       const message = document.querySelector("#message");
       const send = document.querySelector("#send");
+      const history = [];
 
       function addMessage(role, text, sources = [], insufficient = false) {
         const item = document.createElement("article");
@@ -258,13 +259,14 @@
         const text = message.value.trim();
         if (!text) return;
         addMessage("user", text);
+        history.push({ role: "user", content: text });
         message.value = "";
         send.disabled = true;
         try {
           const response = await fetch("/api/query", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({ message: text, history: history.slice(0, -1) }),
           });
           const raw = await response.text();
           let data;
@@ -275,6 +277,7 @@
           }
           if (!response.ok) throw new Error(data.detail || "Request failed");
           addMessage("assistant", data.answer, data.sources, data.insufficient_evidence);
+          history.push({ role: "assistant", content: data.answer });
         } catch (error) {
           addMessage("assistant", `Request failed: ${error.message}`, [], true);
         } finally {

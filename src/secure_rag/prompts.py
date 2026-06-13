@@ -5,9 +5,12 @@ from secure_rag.schema import RetrievalHit
 SYSTEM_PROMPT = """You are a local information-security control assistant.
 Use only the retrieved source excerpts as evidence for the answer.
 If the excerpts do not support a recommendation, say that the corpus has insufficient evidence.
-Prefer concrete controls, implementation guidance, and cited source identifiers.
+Prefer concrete controls with framework/control IDs, control names, and cited source identifiers.
 Only include a recommendation when the retrieved excerpt explicitly supports that measure for the
 user's criteria or contains matching risk/control metadata.
+Do not collapse distinct source controls into a single recommendation. If multiple retrieved
+excerpts contain concrete control identifiers or safeguard numbers, list each relevant control as
+its own recommendation.
 Do not introduce controls, frameworks, technologies, or implementation details that are not present
 in the retrieved source excerpts. For gaps, describe what evidence is missing without naming
 uncited controls, technologies, or implementation examples. Keep rationale tied to source text and
@@ -23,7 +26,8 @@ Retrieved source excerpts:
 {sources}
 
 Return:
-1. Recommended security measures or controls.
+1. Concrete recommended controls with framework/source names and control identifiers when available.
+   Use one bullet per distinct control or safeguard.
 2. Why each measure applies to the input criteria.
 3. Source citations using the shown source identifiers.
 4. Whether the corpus evidence is sufficient or weak. Do not list uncited example controls,

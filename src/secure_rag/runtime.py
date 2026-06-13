@@ -60,9 +60,10 @@ class RagRuntime:
         *,
         message: str,
         context: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> ControlAnswer:
-        criteria = build_criteria(message=message, context=context)
+        criteria = build_criteria(message=message, context=context, history=history)
         return self.engine.answer(criteria, top_k=top_k or self.config.top_k)
 
     def retrieve(
@@ -70,23 +71,37 @@ class RagRuntime:
         *,
         message: str,
         context: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> list[RetrievalHit]:
-        criteria = build_criteria(message=message, context=context)
+        criteria = build_criteria(message=message, context=context, history=history)
         return self.retriever.retrieve(criteria, top_k=top_k or self.config.top_k)
 
 
-def build_criteria(*, message: str, context: dict[str, Any] | None = None) -> str:
+def build_criteria(
+    *,
+    message: str,
+    context: dict[str, Any] | None = None,
+    history: list[dict[str, str]] | None = None,
+) -> str:
     clean_message = message.strip()
     if not clean_message:
         raise ValueError("message cannot be empty")
-    if not context:
-        return clean_message
-    return "\n".join(
-        [
-            clean_message,
-            "",
-            "Structured criteria JSON:",
-            json.dumps(context, ensure_ascii=True, sort_keys=True, indent=2),
+    parts = [clean_message]
+    if history:
+        previous_user_turns = [
+            turn.get("content", "").strip()
+            for turn in history[-6:]
+            if turn.get("role") == "user" and turn.get("content", "").strip()
         ]
-    )
+        if previous_user_turns:
+            parts.extend(["", "Conversation context:", *previous_user_turns])
+    if context:
+        parts.extend(
+            [
+                "",
+                "Structured criteria JSON:",
+                json.dumps(context, ensure_ascii=True, sort_keys=True, indent=2),
+            ]
+        )
+    return "\n".join(parts)

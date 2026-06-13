@@ -26,7 +26,11 @@ class MemoryVectorStore:
 
     def search(self, embedding: list[float], *, top_k: int = 8) -> list[RetrievalHit]:
         hits = [
-            RetrievalHit(chunk=chunk, score=_cosine_similarity(embedding, stored_embedding))
+            RetrievalHit(
+                chunk=chunk,
+                score=_cosine_similarity(embedding, stored_embedding),
+                vector_score=_cosine_similarity(embedding, stored_embedding),
+            )
             for chunk, stored_embedding in self._items
         ]
         return sorted(hits, key=lambda hit: hit.score, reverse=True)[:top_k]
@@ -73,6 +77,7 @@ class ChromaVectorStore:
                 RetrievalHit(
                     chunk=Chunk(id=chunk_id, text=text, metadata=metadata),
                     score=score,
+                    vector_score=score,
                 )
             )
         return hits

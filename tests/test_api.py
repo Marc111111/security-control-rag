@@ -36,9 +36,15 @@ class FakeService:
         *,
         message: str,
         context: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> ControlAnswer:
-        self.last_query = {"message": message, "context": context, "top_k": top_k}
+        self.last_query = {
+            "message": message,
+            "context": context,
+            "history": history,
+            "top_k": top_k,
+        }
         return ControlAnswer(
             answer="Maintain offline backups. Sources: [S1]",
             insufficient_evidence=False,
@@ -51,9 +57,15 @@ class FakeService:
         *,
         message: str,
         context: dict[str, Any] | None = None,
+        history: list[dict[str, str]] | None = None,
         top_k: int | None = None,
     ) -> list[RetrievalHit]:
-        self.last_query = {"message": message, "context": context, "top_k": top_k}
+        self.last_query = {
+            "message": message,
+            "context": context,
+            "history": history,
+            "top_k": top_k,
+        }
         return [
             RetrievalHit(
                 chunk=Chunk(
@@ -88,6 +100,7 @@ def test_query_accepts_natural_language_and_context() -> None:
         json={
             "message": "recommend controls",
             "context": {"risk": "ransomware", "tier": 2},
+            "history": [{"role": "user", "content": "previous question"}],
             "top_k": 5,
         },
     )
@@ -98,6 +111,7 @@ def test_query_accepts_natural_language_and_context() -> None:
     assert service.last_query == {
         "message": "recommend controls",
         "context": {"risk": "ransomware", "tier": 2},
+        "history": [{"role": "user", "content": "previous question"}],
         "top_k": 5,
     }
 

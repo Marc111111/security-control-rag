@@ -38,6 +38,7 @@ class Chunk:
 class RetrievalHit:
     chunk: Chunk
     score: float
+    vector_score: float | None = None
 
 
 @dataclass(frozen=True)
