@@ -26,12 +26,23 @@ Retrieved source excerpts:
 {sources}
 
 Return:
-1. Concrete recommended controls with framework/source names and control identifiers when available.
-   Use one bullet per distinct control or safeguard.
-2. Why each measure applies to the input criteria.
-3. Source citations using the shown source identifiers.
-4. Whether the corpus evidence is sufficient or weak. Do not list uncited example controls,
-technologies, or implementation details."""
+Write a clean, minimal answer in this exact style:
+
+Recommended controls:
+- <framework/control id and name>: <one sentence explaining why it fits>. [S#]
+- <framework/control id and name>: <one sentence explaining why it fits>. [S#]
+
+Notes:
+- <only if needed, one short evidence limitation or practical note>
+
+Rules:
+- No preamble such as "Here is" or "Based on the excerpts".
+- No numbered sections.
+- No markdown bold markers.
+- No risk essay unless the user asks for risks.
+- Keep each bullet to one or two lines.
+- Use source citations inline as [S1], [S2], etc.
+- Do not list uncited example controls, technologies, or implementation details."""
     return [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": user_prompt},

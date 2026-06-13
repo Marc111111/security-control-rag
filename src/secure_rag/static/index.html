@@ -94,7 +94,6 @@
         padding: 14px 16px;
         background: var(--panel);
         line-height: 1.5;
-        white-space: pre-wrap;
       }
 
       .user {
@@ -113,6 +112,28 @@
         gap: 6px;
         color: var(--muted);
         font-size: 12px;
+      }
+
+      .message p {
+        margin: 0 0 10px;
+      }
+
+      .message p:last-child {
+        margin-bottom: 0;
+      }
+
+      .message ul {
+        margin: 6px 0 12px 20px;
+        padding: 0;
+      }
+
+      .message li {
+        margin: 5px 0;
+      }
+
+      .message h3 {
+        margin: 12px 0 6px;
+        font-size: 14px;
       }
 
       .warning {
@@ -224,7 +245,7 @@
       function addMessage(role, text, sources = [], insufficient = false) {
         const item = document.createElement("article");
         item.className = `message ${role}`;
-        item.textContent = text;
+        item.appendChild(renderMessage(text));
         if (insufficient) {
           const warning = document.createElement("div");
           warning.className = "warning";
@@ -243,6 +264,49 @@
         }
         messages.appendChild(item);
         messages.scrollTop = messages.scrollHeight;
+      }
+
+      function renderMessage(text) {
+        const fragment = document.createDocumentFragment();
+        const lines = text
+          .replace(/\*\*/g, "")
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean);
+        let list = null;
+
+        function closeList() {
+          list = null;
+        }
+
+        for (const line of lines) {
+          const bullet = line.match(/^[-*]\s+(.+)$/);
+          const numbered = line.match(/^\d+\.\s+(.+)$/);
+          const heading = line.match(/^([A-Z][A-Za-z ()/.-]{2,40}):$/);
+
+          if (bullet || numbered) {
+            if (!list) {
+              list = document.createElement("ul");
+              fragment.appendChild(list);
+            }
+            const li = document.createElement("li");
+            li.textContent = bullet ? bullet[1] : numbered[1];
+            list.appendChild(li);
+            continue;
+          }
+
+          closeList();
+          const block = document.createElement(heading ? "h3" : "p");
+          block.textContent = heading ? heading[1] : line;
+          fragment.appendChild(block);
+        }
+
+        if (!fragment.childNodes.length) {
+          const p = document.createElement("p");
+          p.textContent = text;
+          fragment.appendChild(p);
+        }
+        return fragment;
       }
 
       async function loadHealth() {
