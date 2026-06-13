@@ -33,6 +33,8 @@ Details live in `docs/architecture.md` and decisions live in `docs/decisions/`.
   `nomic-embed-text`.
 - Vector store: ChromaDB persistent local store, with an in-memory store for tests.
 - CLI-first delivery. API integration can follow once retrieval quality is proven.
+- A simple local web UI and HTTP API are required because the user does not want to operate the
+  system through a CLI.
 - Private corpora, generated vector stores, and model blobs are not committed to Git.
 
 ## Local Model Handling
@@ -51,6 +53,7 @@ python -m ruff check .
 .\scripts\setup_ollama.ps1
 security-rag ingest --source data/raw --db storage/chroma
 security-rag query --db storage/chroma --criteria "controls for ransomware risk"
+security-rag-api
 ```
 
 ## Implementation Notes
@@ -60,6 +63,10 @@ security-rag query --db storage/chroma --criteria "controls for ransomware risk"
 - Use `HashEmbeddingClient` and `MemoryVectorStore` for deterministic tests.
 - Runtime adapters may depend on optional heavy libraries such as ChromaDB, pypdf, python-docx,
   and openpyxl.
+- `POST /api/query` is the preferred app integration point. It accepts natural language in
+  `message` and optional structured criteria in `context`.
+- The default minimum retrieval score is `0.6` to reduce general-knowledge drift. Tune with
+  `SECURE_RAG_MIN_SCORE` only when evidence shows the corpus needs a different threshold.
 - Add tests with every new behavior.
 - GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 

@@ -39,7 +39,7 @@ def test_engine_calls_llm_with_supported_hits() -> None:
             text="Require multi-factor authentication for administrative accounts.",
             metadata={"source_path": "iso.csv"},
         ),
-        score=0.5,
+        score=0.7,
     )
     chat_client = FakeChatClient()
     engine = ControlRagEngine(retriever=FakeRetriever([hit]), chat_client=chat_client)
@@ -50,4 +50,3 @@ def test_engine_calls_llm_with_supported_hits() -> None:
     assert "MFA" in answer.answer
     assert answer.sources[0]["chunk_id"] == "chunk-1"
     assert chat_client.messages is not None
-

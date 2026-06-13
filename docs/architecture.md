@@ -45,7 +45,8 @@ Ollama. The prompt instructs the model to:
 - derive controls from retrieved sources,
 - cite source identifiers,
 - mark weak evidence clearly,
-- return structured sections suitable for app integration.
+- return structured sections suitable for app integration,
+- avoid controls or implementation details that are not present in retrieved source excerpts.
 
 When no relevant sources are found, the engine returns an insufficient-evidence response without
 asking the LLM to invent an answer.
@@ -59,6 +60,9 @@ The project uses:
 - small Git commits and draft PRs,
 - ignored local folders for private corpus files, vector stores, and model blobs.
 
+The first user-facing surface is a local web UI at `/`, backed by `POST /api/query`. The same API
+also exposes `/api/ingest`, `/api/retrieve`, and `/api/health` for app integration.
+
 ## Data Flow
 
 ```text
@@ -68,4 +72,3 @@ criteria/query -> retriever -------------------------------------+
                                                                  |
 retrieved evidence -> grounded prompt -> Ollama/Gemma -> control answer
 ```
-

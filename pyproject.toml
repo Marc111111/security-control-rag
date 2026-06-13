@@ -10,10 +10,12 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "chromadb>=0.5.0",
+  "fastapi>=0.115.0",
   "pypdf>=4.0.0",
   "python-docx>=1.1.0",
   "pyyaml>=6.0.0",
   "openpyxl>=3.1.0",
+  "uvicorn[standard]>=0.30.0",
 ]
 
 [project.optional-dependencies]
@@ -25,9 +27,13 @@ dev = [
 
 [project.scripts]
 security-rag = "secure_rag.cli:main"
+security-rag-api = "secure_rag.api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+secure_rag = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -40,4 +46,3 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
-

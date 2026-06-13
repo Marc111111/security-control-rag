@@ -29,6 +29,7 @@ def main(argv: list[str] | None = None) -> int:
     query.add_argument("--embedding-model", default="mxbai-embed-large")
     query.add_argument("--generation-model", default="gemma3:4b")
     query.add_argument("--top-k", type=int, default=8)
+    query.add_argument("--min-score", type=float, default=0.6)
 
     args = parser.parse_args(argv)
     if args.command == "ingest":
@@ -60,6 +61,7 @@ def _query(args: argparse.Namespace) -> int:
     engine = ControlRagEngine(
         retriever=retriever,
         chat_client=OllamaChatClient(model=args.generation_model),
+        min_score=args.min_score,
     )
     answer = engine.answer(args.criteria, top_k=args.top_k)
     print(
@@ -78,4 +80,3 @@ def _query(args: argparse.Namespace) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

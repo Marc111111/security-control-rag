@@ -11,7 +11,7 @@ class ControlRagEngine:
         *,
         retriever: object,
         chat_client: ChatClient,
-        min_score: float = 0.05,
+        min_score: float = 0.6,
     ) -> None:
         self.retriever = retriever
         self.chat_client = chat_client
@@ -41,4 +41,3 @@ def _source_metadata(hit: RetrievalHit) -> Metadata:
     metadata["chunk_id"] = hit.chunk.id
     metadata["score"] = round(hit.score, 6)
     return metadata
-
