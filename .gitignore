@@ -1,0 +1,22 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Local corpora and generated stores can contain confidential documents.
+data/raw/
+data/processed/
+storage/
+.ollama/
+
+# Local environment.
+.env
+.env.*
+

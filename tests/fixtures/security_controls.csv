@@ -1,0 +1,5 @@
+control_id,framework,risk,tier,control
+AC-001,ISO27001,unauthorized access,2,Require multi-factor authentication for administrative accounts.
+BC-010,NIST CSF,ransomware,2,Maintain offline backups and test restoration procedures quarterly.
+LOG-007,ISO27002,incident detection,1,Collect security logs from critical systems and review alerts daily.
+
