@@ -15,11 +15,19 @@ class FakeService:
         self.config = RagRuntimeConfig(db_path=Path("storage/test"))
         self.last_query: dict[str, Any] | None = None
 
-    def ingest(self, source: str | Path, *, chunk_size: int = 1_500, overlap: int = 200) -> int:
+    def ingest(
+        self,
+        source: str | Path,
+        *,
+        chunk_size: int = 1_500,
+        overlap: int = 200,
+        batch_size: int = 64,
+    ) -> int:
         self.last_query = {
             "source": str(source),
             "chunk_size": chunk_size,
             "overlap": overlap,
+            "batch_size": batch_size,
         }
         return 3
 
@@ -122,4 +130,3 @@ def test_ui_is_served_at_root() -> None:
 
     assert response.status_code == 200
     assert "Security Control RAG" in response.text
-

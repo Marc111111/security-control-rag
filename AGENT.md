@@ -83,3 +83,9 @@ security-rag-api
 Initial implementation is being built in `D:\projects\mike-test`.
 
 First draft PR: `https://github.com/Marc111111/security-control-rag/pull/1`.
+
+On 2026-06-13, the `standards/` folder was populated locally with NIST SP 800-53 Rev. 5,
+NIST CSF 2.0, Secure Controls Framework 2026.x, and CIS Controls v8.1 material. The large
+downloaded standards files are ignored by Git; `standards/SOURCES.md` documents the source URLs
+and ingestion result. The local `storage/chroma` collection contains 22,801 records after standards
+ingestion.

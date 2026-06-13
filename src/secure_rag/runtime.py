@@ -38,12 +38,20 @@ class RagRuntime:
             min_score=config.min_score,
         )
 
-    def ingest(self, source: str | Path, *, chunk_size: int = 1_500, overlap: int = 200) -> int:
+    def ingest(
+        self,
+        source: str | Path,
+        *,
+        chunk_size: int = 1_500,
+        overlap: int = 200,
+        batch_size: int = 64,
+    ) -> int:
         indexer = RagIndexer(
             embedding_client=self.embedding_client,
             vector_store=self.vector_store,
             chunk_size=chunk_size,
             overlap=overlap,
+            batch_size=batch_size,
         )
         return len(indexer.index_path(source))
 

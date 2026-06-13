@@ -22,6 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     ingest.add_argument("--embedding-model", default="mxbai-embed-large")
     ingest.add_argument("--chunk-size", type=int, default=1_500)
     ingest.add_argument("--overlap", type=int, default=200)
+    ingest.add_argument("--batch-size", type=int, default=64)
 
     query = subparsers.add_parser("query", help="Ask for security controls from the local corpus")
     query.add_argument("--db", required=True, help="ChromaDB persistence directory")
@@ -48,6 +49,7 @@ def _ingest(args: argparse.Namespace) -> int:
         vector_store=vector_store,
         chunk_size=args.chunk_size,
         overlap=args.overlap,
+        batch_size=args.batch_size,
     )
     chunks = indexer.index_path(args.source)
     print(json.dumps({"indexed_chunks": len(chunks)}, indent=2))

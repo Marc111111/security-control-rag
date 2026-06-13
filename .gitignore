@@ -13,10 +13,12 @@ build/
 # Local corpora and generated stores can contain confidential documents.
 data/raw/
 data/processed/
+standards/*
+!standards/
+!standards/SOURCES.md
 storage/
 .ollama/
 
 # Local environment.
 .env
 .env.*
-

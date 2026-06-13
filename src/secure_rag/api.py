@@ -15,7 +15,14 @@ from secure_rag.runtime import RagRuntime, RagRuntimeConfig
 class RagService(Protocol):
     config: RagRuntimeConfig
 
-    def ingest(self, source: str | Path, *, chunk_size: int = 1_500, overlap: int = 200) -> int:
+    def ingest(
+        self,
+        source: str | Path,
+        *,
+        chunk_size: int = 1_500,
+        overlap: int = 200,
+        batch_size: int = 64,
+    ) -> int:
         ...
 
     def query(
@@ -47,6 +54,7 @@ class IngestRequest(BaseModel):
     source: str = Field(..., min_length=1)
     chunk_size: int = Field(default=1_500, ge=200, le=10_000)
     overlap: int = Field(default=200, ge=0, le=2_000)
+    batch_size: int = Field(default=64, ge=1, le=512)
 
 
 class HealthResponse(BaseModel):
@@ -95,6 +103,7 @@ def create_app(service: RagService | None = None) -> FastAPI:
                 request.source,
                 chunk_size=request.chunk_size,
                 overlap=request.overlap,
+                batch_size=request.batch_size,
             )
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
