@@ -28,6 +28,38 @@ The API is therefore strict corpus-first. General model knowledge is not the int
 answers. The default relevance threshold is `0.6`; it can be changed with
 `SECURE_RAG_MIN_SCORE` if a corpus needs looser or stricter matching.
 
+## Planned Structured Answer Contract
+
+The current API returns a human-readable `answer` string plus source metadata. The next API slice
+should also return an enforced structured object so the UI and the user's downstream app can depend
+on stable sections instead of parsing free text.
+
+Target shape:
+
+```json
+{
+  "recommended_controls": [
+    {
+      "framework": "CIS Controls",
+      "control_id": "17.4",
+      "title": "Establish and Maintain an Incident Response Process",
+      "why_it_applies": "The query describes missing ransomware response preparation.",
+      "sources": ["S1"]
+    }
+  ],
+  "related_threats": [],
+  "related_vulnerabilities": [],
+  "related_risks": [],
+  "implementation_notes": [],
+  "source_mappings": []
+}
+```
+
+This structured contract is important because the user expects recommendations to consistently
+include controls, threats, vulnerabilities, risks, implementation notes, and source mappings when
+the corpus supports them. A stronger local model alone is not enough; the API must enforce the
+shape and the UI must render that shape cleanly.
+
 ## Natural-Language Query
 
 `POST /api/query`

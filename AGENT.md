@@ -28,14 +28,22 @@ Details live in `docs/architecture.md` and decisions live in `docs/decisions/`.
 ## Decisions
 
 - Language: Python 3.11.
-- Local generation model: Gemma through Ollama. The current machine already has `gemma3:4b`.
+- Local generation model: Gemma through Ollama. The current machine currently has `gemma3:4b`.
+  This was enough to prove the pipeline but produces average reasoning and inconsistent answer
+  shape on security-control recommendation tasks. The next recommended model upgrade for the
+  user's RTX 5080 class machine is `qwen3:14b` if it runs comfortably; fallback candidates are
+  `gemma3:12b`, `qwen3.5:9b`, or a smaller Llama-family model if VRAM pressure is a problem.
 - Embedding model: start with `mxbai-embed-large` through Ollama; fallback option is
-  `nomic-embed-text`.
+  `nomic-embed-text`. Keep `mxbai-embed-large` for now unless retrieval evidence proves it is
+  the bottleneck.
 - Vector store: ChromaDB persistent local store, with an in-memory store for tests.
 - CLI-first delivery. API integration can follow once retrieval quality is proven.
 - A simple local web UI and HTTP API are required because the user does not want to operate the
   system through a CLI.
 - Private corpora, generated vector stores, and model blobs are not committed to Git.
+- The answer contract must become structured rather than free text. The model should produce a
+  predictable schema and the UI should render that schema cleanly. Do not rely on the LLM to
+  format long prose correctly.
 
 ## Local Model Handling
 
@@ -106,3 +114,30 @@ Fixes applied:
   priority.
 - The live Chroma collection was cleaned to remove the three sample fixture chunks, leaving 22,798
   standards chunks.
+
+Later on 2026-06-13, a second bad-answer review exposed a deeper product issue:
+
+- The formatting was over-corrected to be minimal, which made some answers drop requested
+  threat, vulnerability, and risk sections.
+- The LLM is still free-texting. This makes output inconsistent even when retrieval finds useful
+  standards excerpts.
+- Retrieval is still shallow. It retrieves relevant excerpts, but it does not yet assemble a
+  control recommendation packet across frameworks before asking the model to write.
+- The main fix is not just a bigger local model. The durable fix is: stronger local model,
+  enforced structured output contract, and a UI renderer that expects those sections.
+
+The next implementation slice should add an enforced answer schema shaped like:
+
+```json
+{
+  "recommended_controls": [],
+  "related_threats": [],
+  "related_vulnerabilities": [],
+  "related_risks": [],
+  "implementation_notes": [],
+  "source_mappings": []
+}
+```
+
+The API should return this structured object alongside the human-readable answer so the user's
+future app can query the RAG system reliably through natural language or structured JSON criteria.

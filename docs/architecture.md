@@ -34,8 +34,11 @@ Chunks are embedded with a local Ollama embedding model and stored in a vector d
 is the default persistent store. Tests use an in-memory vector store and deterministic hash
 embeddings.
 
-Retrieval supports semantic ranking first. Metadata filters and hybrid keyword search are planned
-once the first real corpus examples are available.
+Retrieval started with semantic ranking and now also expands common security terms and reranks by
+keyword overlap plus standards-source priority. The next improvement is to build a control
+recommendation packet before generation: grouped candidate controls, related threats, related
+vulnerabilities, related risks, implementation notes, and source mappings. This is needed because
+the user expects answers that preserve those sections consistently, not just plausible prose.
 
 ## Building Block 4: Local LLM Orchestration
 
@@ -50,6 +53,28 @@ Ollama. The prompt instructs the model to:
 
 When no relevant sources are found, the engine returns an insufficient-evidence response without
 asking the LLM to invent an answer.
+
+The initial generation model is `gemma3:4b`, which is small enough to prove the local pipeline but
+has shown weak consistency for security-control reasoning. The next recommended upgrade is
+`qwen3:14b` if it runs comfortably on the user's RTX 5080; fallback candidates are `gemma3:12b`,
+`qwen3.5:9b`, or a smaller Llama-family model if VRAM pressure is a problem. The embedding model
+should remain `mxbai-embed-large` until evidence shows retrieval quality is the bottleneck.
+
+The answer should move from free-text prompting to an enforced schema:
+
+```json
+{
+  "recommended_controls": [],
+  "related_threats": [],
+  "related_vulnerabilities": [],
+  "related_risks": [],
+  "implementation_notes": [],
+  "source_mappings": []
+}
+```
+
+The UI can then render clean sections without depending on the model to format paragraphs and
+bullets perfectly.
 
 ## Building Block 5: Governance and Delivery
 
