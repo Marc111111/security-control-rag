@@ -10,7 +10,9 @@ def test_foundation_mock_ui_is_served() -> None:
 
     assert response.status_code == 200
     assert "Foundation Assessment Summary Mock" in response.text
-    assert "/api/mock/foundation-summary" in response.text
+    assert "/api/assessments/foundation-summary/model-run" in response.text
+    assert "gpt-5.4-mini OpenAI" in response.text
+    assert "qwen3:14b local" in response.text
 
 
 def test_mock_foundation_summary_endpoint_runs_without_external_services() -> None:
@@ -41,6 +43,41 @@ def test_token_estimate_is_small_for_sample_packet() -> None:
     body = response.json()
     assert body["estimated_input_tokens"] < 6_000
     assert body["estimated_cost_usd"] < 0.02
+    assert "pricing_note" in body
+
+
+def test_model_run_mock_returns_price_metadata() -> None:
+    client = TestClient(create_app())
+    packet = client.get("/api/mock/foundation-packet").json()
+
+    response = client.post(
+        "/api/assessments/foundation-summary/model-run",
+        json={
+            "packet": packet,
+            "provider": "mock",
+            "model": "gpt-5.4-mini",
+            "debug": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["model_run"]["provider"] == "mock"
+    assert body["model_run"]["model"] == "gpt-5.4-mini"
+    assert body["model_run"]["token_estimate"]["estimated_cost_usd"] > 0
+
+
+def test_model_run_blocks_openai_without_checkbox_confirmation() -> None:
+    client = TestClient(create_app())
+    packet = client.get("/api/mock/foundation-packet").json()
+
+    response = client.post(
+        "/api/assessments/foundation-summary/model-run",
+        json={"packet": packet, "provider": "openai", "model": "gpt-5.4-mini"},
+    )
+
+    assert response.status_code == 400
+    assert "External OpenAI call blocked" in response.json()["detail"]
 
 
 def test_openai_smoke_test_requires_explicit_confirmation() -> None:

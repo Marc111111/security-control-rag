@@ -7,6 +7,11 @@ from app.assessment.prompts import build_foundation_summary_prompt
 from app.assessment.schemas import FoundationAssessmentPacket
 
 MODEL_PRICES_PER_MILLION = {
+    "gpt-5.5": {"input": 5.00, "output": 30.00},
+    "gpt-5.4": {"input": 2.50, "output": 15.00},
+    "gpt-5.4-mini": {"input": 0.75, "output": 4.50},
+    "gpt-5": {"input": 1.25, "output": 10.00},
+    "gpt-5-mini": {"input": 0.25, "output": 2.00},
     "gpt-4.1": {"input": 2.00, "output": 8.00},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
     "gpt-4o-mini": {"input": 0.15, "output": 0.60},
@@ -21,6 +26,7 @@ class TokenEstimate:
     estimated_total_tokens: int
     estimated_cost_usd: float
     prompt_characters: int
+    pricing_note: str
 
     def as_dict(self) -> dict[str, int | float | str]:
         return {
@@ -30,6 +36,7 @@ class TokenEstimate:
             "estimated_total_tokens": self.estimated_total_tokens,
             "estimated_cost_usd": self.estimated_cost_usd,
             "prompt_characters": self.prompt_characters,
+            "pricing_note": self.pricing_note,
         }
 
 
@@ -47,9 +54,15 @@ def estimate_foundation_summary_tokens(
     )
     prompt_text = "\n".join(message["content"] for message in prompt)
     input_tokens = estimate_tokens(prompt_text)
-    price = MODEL_PRICES_PER_MILLION.get(model, MODEL_PRICES_PER_MILLION["gpt-4.1-mini"])
-    input_cost = input_tokens * price["input"] / 1_000_000
-    output_cost = estimated_output_tokens * price["output"] / 1_000_000
+    price = MODEL_PRICES_PER_MILLION.get(model)
+    if price is None:
+        input_cost = 0.0
+        output_cost = 0.0
+        pricing_note = "No API token price configured; local or unknown model is estimated as $0."
+    else:
+        input_cost = input_tokens * price["input"] / 1_000_000
+        output_cost = estimated_output_tokens * price["output"] / 1_000_000
+        pricing_note = "Estimated from configured per-million input/output token prices."
     return TokenEstimate(
         model=model,
         estimated_input_tokens=input_tokens,
@@ -57,10 +70,10 @@ def estimate_foundation_summary_tokens(
         estimated_total_tokens=input_tokens + estimated_output_tokens,
         estimated_cost_usd=round(input_cost + output_cost, 6),
         prompt_characters=len(prompt_text),
+        pricing_note=pricing_note,
     )
 
 
 def estimate_tokens(text: str) -> int:
     # Conservative rough estimate for English prose and JSON without adding a tokenizer dependency.
     return max(1, (len(text) + 2) // 3)
-

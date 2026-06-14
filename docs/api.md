@@ -178,6 +178,21 @@ any external API call.
 The smoke test sends only the compact foundation assessment packet and generated prompt. It does
 not send full documents, vector stores, evidence files, or the GraphRAG corpus.
 
+For runtime comparison from the mock UI, use:
+
+```http
+POST /api/assessments/foundation-summary/model-run
+```
+
+Request fields:
+
+- `provider`: `mock`, `ollama`, or `openai`
+- `model`: for example `qwen3:14b`, `gpt-5.4-mini`, or `gpt-4.1-mini`
+- `confirm_external_call`: required for OpenAI calls
+
+The response includes `model_run.token_estimate` so each request can display estimated price next
+to the generated result.
+
 ## Start the Server
 
 ```powershell

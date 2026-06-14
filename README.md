@@ -184,6 +184,11 @@ It refuses to run unless `confirm_external_call` is `true` and the estimated inp
 the request guard. This is intentional: the prototype sends only the compact assessment packet,
 not full documents or vector-store contents.
 
+The mock screen also has a model selector for runtime comparison. It can run local Ollama models
+such as `qwen3:14b`, estimate OpenAI model costs, and run OpenAI models only when the external-call
+checkbox is enabled. Each comparison run returns `model_run.token_estimate` with estimated input
+tokens, output tokens, total tokens, and price.
+
 ## Original Local RAG Prototype
 
 The first target stack is:

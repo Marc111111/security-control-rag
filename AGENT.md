@@ -188,3 +188,8 @@ It also exposes token estimation through
 `POST /api/assessments/foundation-summary/openai-smoke-test`. The smoke test must require
 `confirm_external_call=true` and must reject prompts above the configured token guard. Do not
 remove that safety guard.
+
+The mock screen now includes a runtime model selector backed by
+`POST /api/assessments/foundation-summary/model-run`. It supports `mock`, `ollama`, and `openai`
+providers. Every run must return `model_run.token_estimate` so the UI can show estimated request
+price. OpenAI runs must remain blocked unless `confirm_external_call=true`.

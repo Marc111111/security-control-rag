@@ -95,6 +95,42 @@
         display: flex;
         gap: 8px;
         flex-wrap: wrap;
+        align-items: center;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: minmax(180px, 260px) auto;
+        gap: 10px;
+        align-items: end;
+      }
+      .control label {
+        display: block;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 5px;
+      }
+      select {
+        width: 100%;
+        height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: white;
+        color: var(--ink);
+        padding: 0 9px;
+        font: inherit;
+      }
+      .check {
+        min-height: 38px;
+        display: inline-flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .check input {
+        width: 16px;
+        height: 16px;
       }
       button {
         border: 1px solid var(--accent);
@@ -116,6 +152,28 @@
       .status {
         font-size: 12px;
         color: var(--muted);
+      }
+      .price {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .metric {
+        background: #eef4f2;
+        border: 1px solid #d4e4e0;
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .metric span {
+        display: block;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .metric strong {
+        display: block;
+        font-size: 14px;
       }
       .grid {
         display: grid;
@@ -193,10 +251,29 @@
         </div>
         <div class="actions">
           <button id="runMock">Run Simulation</button>
-          <button class="secondary" id="estimate">Estimate GPT-4.1 mini Tokens</button>
-          <button class="secondary" id="runLive">Run Live Provider</button>
+          <button class="secondary" id="estimate">Estimate Selected Model</button>
+          <button class="secondary" id="runSelected">Run Selected Model</button>
+        </div>
+        <div class="controls">
+          <div class="control">
+            <label for="modelSelect">Model</label>
+            <select id="modelSelect">
+              <option value="qwen3:14b" data-provider="ollama">qwen3:14b local</option>
+              <option value="gemma3:4b" data-provider="ollama">gemma3:4b local</option>
+              <option value="gpt-5.4-mini" data-provider="openai">gpt-5.4-mini OpenAI</option>
+              <option value="gpt-5-mini" data-provider="openai">gpt-5-mini OpenAI</option>
+              <option value="gpt-4.1-mini" data-provider="openai">gpt-4.1-mini OpenAI</option>
+              <option value="gpt-5" data-provider="openai">gpt-5 OpenAI</option>
+              <option value="gpt-5.5" data-provider="openai">gpt-5.5 OpenAI</option>
+            </select>
+          </div>
+          <label class="check">
+            <input type="checkbox" id="allowExternal" />
+            Allow external OpenAI call for selected model
+          </label>
         </div>
         <div class="status" id="status">Ready.</div>
+        <div class="price" id="price"></div>
       </section>
       <section>
         <div class="grid">
@@ -226,6 +303,9 @@
       const findingsEl = document.querySelector("#findings");
       const postgresEl = document.querySelector("#postgres");
       const debugEl = document.querySelector("#debug");
+      const modelSelect = document.querySelector("#modelSelect");
+      const allowExternal = document.querySelector("#allowExternal");
+      const priceEl = document.querySelector("#price");
       let samplePacket = null;
 
       async function loadSample() {
@@ -236,6 +316,22 @@
 
       function packetPayload() {
         return { packet: JSON.parse(packetEl.value), debug: true };
+      }
+
+      function selectedModel() {
+        const option = modelSelect.options[modelSelect.selectedIndex];
+        return { model: option.value, provider: option.dataset.provider };
+      }
+
+      function modelPayload() {
+        const selected = selectedModel();
+        return {
+          ...packetPayload(),
+          model: selected.model,
+          provider: selected.provider,
+          estimated_output_tokens: 900,
+          confirm_external_call: allowExternal.checked,
+        };
       }
 
       async function postJson(url, body) {
@@ -271,7 +367,30 @@
           .map(([name, items]) => listField(name, items.map((item) => item.summary)))
           .join("");
         postgresEl.textContent = JSON.stringify(data.postgres_payload || {}, null, 2);
-        debugEl.textContent = JSON.stringify(data.debug || {}, null, 2);
+        const estimate = data.model_run?.token_estimate || data.token_estimate;
+        if (estimate) renderPrice(data.model_run || { provider: "estimate", model: estimate.model, token_estimate: estimate });
+        debugEl.textContent = JSON.stringify(
+          {
+            model_run: data.model_run,
+            debug: data.debug,
+          },
+          null,
+          2,
+        );
+      }
+
+      function renderPrice(modelRun) {
+        const estimate = modelRun.token_estimate || {};
+        priceEl.innerHTML = [
+          metric("Provider", modelRun.provider || "n/a"),
+          metric("Model", modelRun.model || estimate.model || "n/a"),
+          metric("Estimated tokens", estimate.estimated_total_tokens ?? "n/a"),
+          metric("Estimated price", `$${estimate.estimated_cost_usd ?? "0.000000"}`),
+        ].join("");
+      }
+
+      function metric(label, value) {
+        return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
       }
 
       function field(label, value) {
@@ -315,9 +434,10 @@
           setBusy(true, "Estimating token usage...");
           const data = await postJson("/api/assessments/foundation-summary/token-estimate", {
             ...packetPayload(),
-            model: "gpt-4.1-mini",
+            model: selectedModel().model,
           });
           debugEl.textContent = JSON.stringify(data, null, 2);
+          renderPrice({ provider: selectedModel().provider, model: selectedModel().model, token_estimate: data });
           statusEl.textContent = `Estimated cost: $${data.estimated_cost_usd}`;
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
@@ -326,17 +446,25 @@
         }
       });
 
-      document.querySelector("#runLive").addEventListener("click", async () => {
+      document.querySelector("#runSelected").addEventListener("click", async () => {
         try {
-          setBusy(true, "Running configured local/OpenAI provider...");
-          const data = await postJson("/api/assessments/foundation-summary", packetPayload());
+          const selected = selectedModel();
+          setBusy(true, `Running ${selected.model}...`);
+          const data = await postJson(
+            "/api/assessments/foundation-summary/model-run",
+            modelPayload(),
+          );
           renderResponse(data);
-          statusEl.textContent = "Live provider run complete.";
+          statusEl.textContent = `${selected.model} run complete. Estimated price: $${data.model_run.token_estimate.estimated_cost_usd}`;
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         } finally {
           setBusy(false, statusEl.textContent);
         }
+      });
+
+      modelSelect.addEventListener("change", () => {
+        document.querySelector("#estimate").click();
       });
 
       loadSample().then(() => document.querySelector("#runMock").click());

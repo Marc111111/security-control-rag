@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
@@ -16,6 +16,7 @@ from app.assessment.workflow import FoundationAssessmentWorkflow
 from app.config import Settings, load_settings
 from app.generation.clients import OpenAIChatClient
 from app.pipeline import GraphRagPipeline
+from secure_rag.llm import OllamaChatClient
 
 
 class GraphRagService(Protocol):
@@ -86,6 +87,13 @@ class TokenEstimateRequest(BaseModel):
 
 
 class OpenAISmokeTestRequest(TokenEstimateRequest):
+    confirm_external_call: bool = False
+    max_estimated_input_tokens: int = Field(default=6_000, ge=500, le=20_000)
+
+
+class FoundationModelRunRequest(TokenEstimateRequest):
+    provider: Literal["mock", "ollama", "openai"] = "ollama"
+    debug: bool = True
     confirm_external_call: bool = False
     max_estimated_input_tokens: int = Field(default=6_000, ge=500, le=20_000)
 
@@ -228,6 +236,49 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
         data["token_estimate"] = estimate.as_dict()
         return data
 
+    @app.post("/api/assessments/foundation-summary/model-run")
+    def foundation_model_run(request: FoundationModelRunRequest) -> dict[str, Any]:
+        estimate = estimate_foundation_summary_tokens(
+            request.packet,
+            model=request.model,
+            estimated_output_tokens=request.estimated_output_tokens,
+        )
+        if estimate.estimated_input_tokens > request.max_estimated_input_tokens:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Estimated input tokens exceed the request guard. "
+                    f"Estimated {estimate.estimated_input_tokens}, "
+                    f"limit {request.max_estimated_input_tokens}."
+                ),
+            )
+        settings = load_settings()
+        if request.provider == "openai" and not request.confirm_external_call:
+            raise HTTPException(
+                status_code=400,
+                detail="External OpenAI call blocked. Enable the external-call checkbox first.",
+            )
+        try:
+            workflow = FoundationAssessmentWorkflow(
+                _chat_model_for_comparison(
+                    provider=request.provider,
+                    model=request.model,
+                    settings=settings,
+                    max_output_tokens=request.estimated_output_tokens,
+                )
+            )
+            response = workflow.summarize(request.packet, debug=request.debug)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        data = response.model_dump()
+        data["model_run"] = {
+            "provider": request.provider,
+            "model": request.model,
+            "external_call": request.provider == "openai",
+            "token_estimate": estimate.as_dict(),
+        }
+        return data
+
     @app.post("/api/evaluation/feedback")
     def feedback(
         request: FeedbackRequest,
@@ -255,6 +306,24 @@ app = create_app()
 def _static_file(name: str) -> str:
     path = Path(__file__).with_name("static") / name
     return path.read_text(encoding="utf-8")
+
+
+def _chat_model_for_comparison(
+    *,
+    provider: Literal["mock", "ollama", "openai"],
+    model: str,
+    settings: Settings,
+    max_output_tokens: int,
+) -> object:
+    if provider == "mock":
+        return MockFoundationChatModel()
+    if provider == "openai":
+        return OpenAIChatClient(
+            api_key=settings.openai_api_key,
+            model=model,
+            max_output_tokens=max_output_tokens,
+        )
+    return OllamaChatClient(model=model, base_url=settings.ollama_base_url)
 
 
 def main() -> None:
