@@ -17,7 +17,7 @@ class OllamaChatClient:
         *,
         model: str = "qwen3:14b",
         base_url: str = "http://localhost:11434",
-        timeout: float = 120.0,
+        timeout: float = 600.0,
         temperature: float = 0.1,
     ) -> None:
         self.model = model
@@ -50,4 +50,4 @@ class OllamaChatClient:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"Could not reach Ollama at {self.base_url}") from exc
+            raise RuntimeError(f"Could not reach Ollama at {self.base_url}: {exc}") from exc

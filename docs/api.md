@@ -148,6 +148,98 @@ Human-generated comments are sanitized before prompt construction. Full complian
 as strength; partial and no compliance are classified as weakness. The endpoint does not create
 immutable snapshots itself; that remains an application persistence decision after analyst review.
 
+## Complete Assessment GraphRAG Workflow
+
+`POST /api/workflows/complete-assessment/run`
+
+This is the current end-to-end prototype endpoint. It accepts a replaceable source input adapter,
+normalizes the source data, runs the real GraphRAG workflow, and returns persisted workflow steps
+plus a deterministic PostgreSQL-ready result contract.
+
+Request:
+
+```json
+{
+  "input_source": {
+    "adapter": "foundation_packet_v1",
+    "payload": {
+      "assessment_id": "A-100",
+      "vendor": {},
+      "tier": {},
+      "questionnaire_results": []
+    }
+  },
+  "model": {
+    "provider": "ollama",
+    "model": "qwen3:14b",
+    "confirm_external_call": false,
+    "estimated_output_tokens": 1200,
+    "max_estimated_input_tokens": 16000
+  },
+  "top_k": 10,
+  "debug": true
+}
+```
+
+Supported `input_source.adapter` values:
+
+- `foundation_packet_v1`: payload is already the normalized assessment packet.
+- `simulated_postgres_v1`: payload can be a simulated PostgreSQL row, `{ "row": ... }`,
+  `{ "rows": [ ... ] }`, or `{ "packet": ... }`.
+
+The source adapter is intentionally the only layer that knows the SQL/result shape. A production
+PostgreSQL adapter can be added later without changing GraphRAG retrieval, LLM prompting, result
+assembly, or the UI renderer.
+
+Supported model selections:
+
+- Local: `provider=ollama`, `model=qwen3:14b` or `gemma3:4b`.
+- External: `provider=openai`, `model=gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5`, or `gpt-4.1-mini`.
+
+OpenAI requests require `confirm_external_call=true` and either a request-scoped
+`openai_api_key` or `OPENAI_API_KEY` in the environment.
+
+Response:
+
+```json
+{
+  "run_id": "run-...",
+  "created_at": "2026-06-14T...",
+  "assessment_id": "A-100",
+  "vendor_id": "V-1",
+  "provider": "ollama",
+  "model": "qwen3:14b",
+  "cost_estimate": {
+    "llm_call_count": 3,
+    "estimated_input_tokens": 10000,
+    "estimated_output_tokens": 3600,
+    "estimated_cost_usd": 0.0
+  },
+  "steps": [
+    {
+      "name": "Input source adapter",
+      "explanation": "",
+      "tool": "",
+      "input": {},
+      "process": "",
+      "output": {}
+    }
+  ],
+  "final_result": {
+    "assessment_id": "A-100",
+    "vendor_id": "V-1",
+    "draft_sections": {},
+    "risk_evaluations": [],
+    "snapshot_ready": false,
+    "source_question_ids": []
+  },
+  "run_path": "data/workflow_runs/run-....json"
+}
+```
+
+The UI renders `steps` vertically. Each step includes input, process, and output so analysts can
+inspect what was called, what was sent to the selected model, and what came back.
+
 ### Mock UI and Mock Endpoints
 
 Open the local mockup at:

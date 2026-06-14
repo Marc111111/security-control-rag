@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Protocol
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from app.schemas import DocumentChunk, RetrievedEvidence
 from secure_rag.vector_store import _cosine_similarity
@@ -69,12 +69,21 @@ class QdrantDenseStore:
         self.client.upsert(collection_name=self.collection, points=points)
 
     def search(self, embedding: list[float], *, top_k: int) -> list[RetrievedEvidence]:
-        result = self.client.search(
-            collection_name=self.collection,
-            query_vector=embedding,
-            limit=top_k,
-            with_payload=True,
-        )
+        if hasattr(self.client, "query_points"):
+            response = self.client.query_points(
+                collection_name=self.collection,
+                query=embedding,
+                limit=top_k,
+                with_payload=True,
+            )
+            result = response.points
+        else:
+            result = self.client.search(
+                collection_name=self.collection,
+                query_vector=embedding,
+                limit=top_k,
+                with_payload=True,
+            )
         hits: list[RetrievedEvidence] = []
         for point in result:
             payload = point.payload or {}
@@ -97,6 +106,6 @@ class QdrantDenseStore:
 
 def _qdrant_point_id(chunk_id: str) -> str:
     try:
-        return str(UUID(chunk_id[:32]))
+        return str(UUID(chunk_id))
     except ValueError:
-        return str(UUID(bytes=chunk_id.encode("utf-8")[:16].ljust(16, b"0")))
+        return str(uuid5(NAMESPACE_URL, chunk_id))

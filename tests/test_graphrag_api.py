@@ -51,7 +51,12 @@ def test_graphrag_api_ingest_retrieve_and_query(tmp_path: Path) -> None:
         "and business disruption risk.",
         encoding="utf-8",
     )
-    settings = Settings(vector_backend="memory", graph_backend="memory", debug=True)
+    settings = Settings(
+        vector_backend="memory",
+        graph_backend="memory",
+        debug=True,
+        keyword_index_path=str(tmp_path / "keyword" / "chunks.jsonl"),
+    )
     pipeline = GraphRagPipeline(
         settings,
         embedding_client=HashEmbeddingClient(dimensions=32),

@@ -13,11 +13,16 @@ build/
 # Local corpora and generated stores can contain confidential documents.
 data/raw/
 data/processed/
+data/workflow_runs/
+data/last_workflow_run.json
 standards/*
 !standards/
 !standards/SOURCES.md
 storage/
 .ollama/
+third_party/*
+!third_party/
+!third_party/README.md
 
 # Local environment.
 .env

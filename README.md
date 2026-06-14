@@ -91,8 +91,8 @@ $env:GRAPHRAG_LLM_PROVIDER = "openai"
 $env:OPENAI_API_KEY = "<your key>"
 ```
 
-The older `secure_rag` Chroma-based API is still present for compatibility while the GraphRAG
-prototype matures.
+The older `secure_rag` Chroma-based API is still present for compatibility only. New workflow
+work should use Qdrant, BM25, and Neo4j through `src/app`.
 
 ## Foundation Assessment Summary Prototype
 
@@ -163,10 +163,45 @@ The workflow sanitizes human-generated vendor and analyst comments before placin
 prompt. Full compliance becomes strengths; partial and no compliance become weaknesses. The LLM
 may draft the business wording, but deterministic code prepares the findings and fallback summary.
 
-For a no-database demo, the mock screen calls:
+For the current complete workflow demo, the screen starts from simulated PostgreSQL-shaped input
+but then runs the real workflow stack. The first source shape is replaceable through
+`input_source.adapter`, so production PostgreSQL can later supply a different row/view model
+without rewriting the chain.
+
+Main endpoint:
+
+```http
+POST /api/workflows/complete-assessment/run
+```
+
+Example request shape:
+
+```json
+{
+  "input_source": {
+    "adapter": "foundation_packet_v1",
+    "payload": {
+      "assessment_id": "A-100",
+      "vendor": {},
+      "tier": {},
+      "questionnaire_results": []
+    }
+  },
+  "model": {
+    "provider": "ollama",
+    "model": "qwen3:14b"
+  },
+  "top_k": 10,
+  "debug": true
+}
+```
+
+The response includes `steps` for the visual workflow, `cost_estimate`, `final_result`, and
+`run_path`. Saved runs can be compared through `GET /api/workflows/complete-assessment/runs`.
+
+For a no-database packet sample, the screen calls:
 
 - `GET /api/mock/foundation-packet`
-- `POST /api/mock/foundation-summary`
 
 For a cost check before OpenAI testing, call:
 

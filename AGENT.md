@@ -13,14 +13,30 @@ framework mappings.
 The system should answer primarily from the user's corpus, not from generic LLM training data.
 When evidence is weak, it should say so instead of inventing controls.
 
+## Current Goal And Runbook
+
+Active implementation goal: replace the mock/legacy path with a real end-to-end assessment
+workflow that uses simulated PostgreSQL input only at the first boundary, then runs real
+normalization, sanitization, GraphRAG retrieval, Qdrant, BM25, Neo4j, selected LLM calls,
+structured result assembly, run persistence, tests, and a clean workflow UI.
+
+Read `docs/runbooks/complete-assessment-graphrag-goal.md` before continuing any context rollover.
+That runbook tracks what is real, what is simulated, what worked, what did not, and what still
+needs improvement.
+
+The source SQL/result shape must remain replaceable. The workflow API accepts an `input_source`
+object with an adapter name and payload. The adapter normalizes the incoming source shape into the
+canonical assessment packet; the rest of the chain must not depend on the simulated SQL format.
+
 ## Current Architecture
 
-The project is organized around five building blocks:
+The current project is organized around five building blocks:
 
 1. Knowledge ingestion pipeline for PDFs, Word files, text, CSV, JSON, YAML, and Excel.
 2. Security knowledge schema for chunks, controls, risks, vulnerabilities, tiers, and provenance.
-3. Vector database and retrieval layer using local embeddings and ChromaDB.
-4. Local LLM orchestration through Ollama and Gemma with source-grounded prompts.
+3. GraphRAG retrieval using Qdrant dense vectors, persistent BM25 keyword search, and Neo4j graph
+   traversal.
+4. LLM orchestration through Ollama or guarded OpenAI calls with source-grounded prompts.
 5. Governance layer: this file, architecture docs, tests, GitHub repository, and small PRs.
 
 Details live in `docs/architecture.md` and decisions live in `docs/decisions/`.
@@ -35,8 +51,12 @@ Details live in `docs/architecture.md` and decisions live in `docs/decisions/`.
 - Embedding model: start with `mxbai-embed-large` through Ollama; fallback option is
   `nomic-embed-text`. Keep `mxbai-embed-large` for now unless retrieval evidence proves it is
   the bottleneck.
-- Vector store: ChromaDB persistent local store, with an in-memory store for tests.
-- CLI-first delivery. API integration can follow once retrieval quality is proven.
+- Vector store: Qdrant is the default for the advanced workflow. Persistent BM25 lives at
+  `third_party/keyword_index/chunks.jsonl`. Neo4j Community stores extracted graph entities and
+  relationships.
+- Legacy Chroma is decommissioned for new workflow work. `src/secure_rag` remains only for
+  backwards compatibility and old tests; do not build new features on it.
+- API and UI delivery are required. The user does not want to operate the system through a CLI.
 - A simple local web UI and HTTP API are required because the user does not want to operate the
   system through a CLI.
 - Private corpora, generated vector stores, and model blobs are not committed to Git.
@@ -58,9 +78,9 @@ python -m pip install -e ".[dev]"
 pytest
 python -m ruff check .
 .\scripts\setup_ollama.ps1
-security-rag ingest --source data/raw --db storage/chroma
-security-rag query --db storage/chroma --criteria "controls for ransomware risk"
-security-rag-api
+docker compose up -d
+python scripts\ingest_graphrag.py standards
+grc-graphrag-api
 ```
 
 ## Implementation Notes
@@ -70,10 +90,11 @@ security-rag-api
 - Use `HashEmbeddingClient` and `MemoryVectorStore` for deterministic tests.
 - Runtime adapters may depend on optional heavy libraries such as ChromaDB, pypdf, python-docx,
   and openpyxl.
-- `POST /api/query` is the preferred app integration point. It accepts natural language in
-  `message` and optional structured criteria in `context`.
-- The default minimum retrieval score is `0.6` to reduce general-knowledge drift. Tune with
-  `SECURE_RAG_MIN_SCORE` only when evidence shows the corpus needs a different threshold.
+- `POST /api/workflows/complete-assessment/run` is the current SaaS workflow entrypoint. It accepts
+  `input_source` plus model settings and returns persisted workflow steps plus a deterministic
+  result contract.
+- `POST /api/query` remains the lower-level GraphRAG natural-language query endpoint.
+- The complete workflow must show each step's input, process, and output in the UI.
 - Add tests with every new behavior.
 - GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 

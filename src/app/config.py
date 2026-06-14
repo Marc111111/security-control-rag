@@ -16,6 +16,8 @@ class Settings:
     openai_model: str = "gpt-4.1-mini"
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection: str = "cyber_grc_chunks"
+    keyword_index_path: str = "third_party/keyword_index/chunks.jsonl"
+    run_store_path: str = "data/workflow_runs"
     vector_backend: str = "qdrant"
     graph_backend: str = "neo4j"
     neo4j_uri: str = "bolt://localhost:7687"
@@ -37,6 +39,11 @@ def load_settings() -> Settings:
         openai_model=os.getenv("OPENAI_MODEL", "gpt-4.1-mini"),
         qdrant_url=os.getenv("QDRANT_URL", "http://localhost:6333"),
         qdrant_collection=os.getenv("QDRANT_COLLECTION", "cyber_grc_chunks"),
+        keyword_index_path=os.getenv(
+            "GRAPHRAG_KEYWORD_INDEX_PATH",
+            "third_party/keyword_index/chunks.jsonl",
+        ),
+        run_store_path=os.getenv("GRAPHRAG_RUN_STORE_PATH", "data/workflow_runs"),
         vector_backend=os.getenv("GRAPHRAG_VECTOR_BACKEND", "qdrant").lower(),
         graph_backend=os.getenv("GRAPHRAG_GRAPH_BACKEND", "neo4j").lower(),
         neo4j_uri=os.getenv("NEO4J_URI", "bolt://localhost:7687"),
@@ -45,4 +52,3 @@ def load_settings() -> Settings:
         top_k=int(os.getenv("GRAPHRAG_TOP_K", "12")),
         debug=os.getenv("GRAPHRAG_DEBUG", "false").lower() in {"1", "true", "yes"},
     )
-

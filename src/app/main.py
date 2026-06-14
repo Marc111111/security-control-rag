@@ -16,6 +16,8 @@ from app.assessment.workflow import FoundationAssessmentWorkflow
 from app.config import Settings, load_settings
 from app.generation.clients import OpenAIChatClient
 from app.pipeline import GraphRagPipeline
+from app.workflows.complete_assessment import CompleteAssessmentRequest, CompleteAssessmentWorkflow
+from app.workflows.run_store import WorkflowRunStore
 from secure_rag.llm import OllamaChatClient
 
 
@@ -29,8 +31,7 @@ class GraphRagService(Protocol):
         chunk_size: int = 1_500,
         overlap: int = 200,
         batch_size: int = 64,
-    ) -> dict[str, int]:
-        ...
+    ) -> dict[str, int]: ...
 
     def query(
         self,
@@ -39,19 +40,16 @@ class GraphRagService(Protocol):
         context: dict[str, Any] | None = None,
         top_k: int | None = None,
         debug: bool | None = None,
-    ) -> object:
-        ...
+    ) -> object: ...
 
-    def retrieve_debug(self, question: str, *, top_k: int | None = None) -> dict[str, Any]:
-        ...
+    def retrieve_debug(self, question: str, *, top_k: int | None = None) -> dict[str, Any]: ...
 
     def foundation_summary(
         self,
         packet: FoundationAssessmentPacket,
         *,
         debug: bool = False,
-    ) -> object:
-        ...
+    ) -> object: ...
 
 
 class IngestRequest(BaseModel):
@@ -131,6 +129,42 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
             "vector_backend": current.settings.vector_backend,
             "graph_backend": current.settings.graph_backend,
         }
+
+    @app.post("/api/workflows/complete-assessment/run")
+    def complete_assessment_run(
+        request: CompleteAssessmentRequest,
+        current: GraphRagService = Depends(get_service),  # noqa: B008
+    ) -> dict[str, Any]:
+        try:
+            pipeline = (
+                current
+                if isinstance(current, GraphRagPipeline)
+                else GraphRagPipeline(load_settings())
+            )
+            workflow = CompleteAssessmentWorkflow(
+                pipeline=pipeline,
+                run_store=WorkflowRunStore(pipeline.settings.run_store_path),
+            )
+            return workflow.run(request)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/workflows/complete-assessment/runs")
+    def complete_assessment_runs(
+        current: GraphRagService = Depends(get_service),  # noqa: B008
+    ) -> list[dict[str, Any]]:
+        settings = current.settings
+        return WorkflowRunStore(settings.run_store_path).list_runs()
+
+    @app.get("/api/workflows/complete-assessment/runs/{run_id}")
+    def complete_assessment_run_detail(
+        run_id: str,
+        current: GraphRagService = Depends(get_service),  # noqa: B008
+    ) -> dict[str, Any]:
+        try:
+            return WorkflowRunStore(current.settings.run_store_path).get(run_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="run not found") from exc
 
     @app.post("/api/ingest")
     def ingest(

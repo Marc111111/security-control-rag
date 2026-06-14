@@ -9,14 +9,14 @@ def test_foundation_mock_ui_is_served() -> None:
     response = client.get("/mock/foundation")
 
     assert response.status_code == 200
-    assert "Foundation Assessment Summary Mock" in response.text
-    assert "/api/assessments/foundation-summary/model-run" in response.text
-    assert "gpt-5.4-mini OpenAI" in response.text
-    assert "qwen3:14b local" in response.text
+    assert "Complete GraphRAG Assessment Workflow" in response.text
+    assert "/api/workflows/complete-assessment/run" in response.text
+    assert "gpt-5.4-mini" in response.text
+    assert "qwen3:14b" in response.text
     assert "OpenAI API key for this request only" in response.text
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
-    assert "Read assessment rows from PostgreSQL" in response.text
+    assert "Simulated SQL Result JSON" in response.text
 
 
 def test_mock_foundation_summary_endpoint_runs_without_external_services() -> None:

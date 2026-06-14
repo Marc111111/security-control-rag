@@ -29,6 +29,19 @@ class OpenAIChatClient:
         self.max_output_tokens = max_output_tokens
 
     def chat(self, messages: list[dict[str, str]]) -> str:
+        if hasattr(self.client, "responses"):
+            response_kwargs: dict[str, object] = {
+                "model": self.model,
+                "input": messages,
+                "temperature": 0.1,
+            }
+            if self.max_output_tokens is not None:
+                response_kwargs["max_output_tokens"] = self.max_output_tokens
+            response = self.client.responses.create(**response_kwargs)
+            content = getattr(response, "output_text", None)
+            if content:
+                return str(content)
+
         kwargs: dict[str, object] = {}
         if self.max_output_tokens is not None:
             kwargs["max_tokens"] = self.max_output_tokens

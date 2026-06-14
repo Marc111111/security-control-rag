@@ -175,7 +175,7 @@ class GraphRagPipeline:
 
     def _keyword_index_instance(self) -> KeywordIndex:
         if self.keyword_index is None:
-            self.keyword_index = KeywordIndex()
+            self.keyword_index = KeywordIndex(path=self.settings.keyword_index_path)
         return self.keyword_index
 
     def _graph_store_instance(self) -> GraphStore:

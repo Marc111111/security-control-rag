@@ -9,18 +9,16 @@ from app.schemas import GraphRagAnswer, MatrixRow, RetrievedEvidence, Structured
 def parse_structured_answer(raw: str, evidence: list[RetrievedEvidence]) -> StructuredRiskAnswer:
     try:
         data = json.loads(_extract_json(raw))
-        return StructuredRiskAnswer.model_validate(data)
+        data = _normalize_model_json(data, evidence)
+        answer = StructuredRiskAnswer.model_validate(data)
+        return augment_answer_with_evidence_controls(answer, evidence)
     except Exception:
         return fallback_answer(raw, evidence)
 
 
 def fallback_answer(raw: str, evidence: list[RetrievedEvidence]) -> StructuredRiskAnswer:
     citations = _source_citations(evidence)
-    controls = [
-        _control_label(hit)
-        for hit in evidence
-        if hit.chunk.metadata.get("control_id") or "control" in hit.chunk.text.lower()
-    ]
+    controls = _extract_control_labels(evidence)
     return StructuredRiskAnswer(
         executive_summary=(
             raw.strip()[:1_000]
@@ -48,6 +46,30 @@ def fallback_answer(raw: str, evidence: list[RetrievedEvidence]) -> StructuredRi
             "The model response was not valid JSON, so the service returned a conservative "
             "fallback structure."
         ),
+    )
+
+
+def augment_answer_with_evidence_controls(
+    answer: StructuredRiskAnswer,
+    evidence: list[RetrievedEvidence],
+) -> StructuredRiskAnswer:
+    extracted = _extract_control_labels(evidence)
+    evidence_text = "\n".join(hit.chunk.text for hit in evidence).lower()
+    supported_existing = [
+        control
+        for control in answer.recommended_controls
+        if control.lower() in evidence_text
+    ]
+    controls = list(dict.fromkeys([*extracted, *supported_existing]))
+    rows = [
+        row.model_copy(update={"controls": list(dict.fromkeys([*controls, *row.controls]))})
+        for row in answer.risk_control_matrix
+    ]
+    return answer.model_copy(
+        update={
+            "recommended_controls": controls or answer.recommended_controls,
+            "risk_control_matrix": rows,
+        }
     )
 
 
@@ -79,6 +101,68 @@ def _extract_json(text: str) -> str:
     return text
 
 
+def _normalize_model_json(
+    data: object,
+    evidence: list[RetrievedEvidence],
+) -> dict[str, object]:
+    if not isinstance(data, dict):
+        return {}
+    normalized = dict(data)
+    for key in ["assumptions", "threats", "vulnerabilities", "risks", "recommended_controls"]:
+        normalized[key] = _list_of_strings(normalized.get(key))
+    normalized["missing_information"] = _list_of_strings(
+        normalized.get("missing_information")
+    )
+    rows = normalized.get("risk_control_matrix")
+    if isinstance(rows, list):
+        normalized["risk_control_matrix"] = [_normalize_matrix_row(row) for row in rows]
+    else:
+        normalized["risk_control_matrix"] = []
+    citations = normalized.get("source_citations")
+    if isinstance(citations, list) and citations and all(
+        isinstance(item, str) for item in citations
+    ):
+        citation_map = {citation["id"]: citation for citation in _source_citations(evidence)}
+        normalized["source_citations"] = [
+            citation_map.get(item, {"id": item}) for item in citations
+        ]
+    elif not isinstance(citations, list):
+        normalized["source_citations"] = []
+    return normalized
+
+
+def _normalize_matrix_row(row: object) -> dict[str, object]:
+    if not isinstance(row, dict):
+        return {}
+    normalized = dict(row)
+    for key in ["gap", "threat", "vulnerability", "risk", "likelihood", "impact"]:
+        normalized[key] = _string_value(normalized.get(key))
+    normalized["controls"] = _list_of_strings(normalized.get("controls"))
+    normalized["evidence"] = _list_of_strings(normalized.get("evidence"))
+    return normalized
+
+
+def _list_of_strings(value: object) -> list[str]:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+    return [_string_value(item) for item in value if _string_value(item)]
+
+
+def _string_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for key in ["name", "title", "control_id", "id", "value"]:
+            item = value.get(key)
+            if item:
+                return str(item)
+    return str(value)
+
+
 def _source_citations(evidence: list[RetrievedEvidence]) -> list[dict[str, object]]:
     citations: list[dict[str, object]] = []
     for index, hit in enumerate(evidence, 1):
@@ -96,12 +180,53 @@ def _source_citations(evidence: list[RetrievedEvidence]) -> list[dict[str, objec
     return citations
 
 
-def _control_label(hit: RetrievedEvidence) -> str:
-    metadata = hit.chunk.metadata
-    framework = metadata.get("framework")
-    control_id = metadata.get("control_id")
-    if framework and control_id:
-        return f"{framework} {control_id}"
-    if control_id:
-        return str(control_id)
-    return ""
+def _extract_control_labels(evidence: list[RetrievedEvidence]) -> list[str]:
+    controls: list[str] = []
+    for hit in evidence:
+        text = hit.chunk.text
+        controls.extend(_cis_safeguards(text))
+        controls.extend(_cis_controls(text))
+        controls.extend(_scf_controls(text))
+    return list(dict.fromkeys(controls))[:8]
+
+
+def _cis_safeguards(text: str) -> list[str]:
+    return [
+        f"CIS Safeguard {match.group(1)} - {_clean_title(match.group(2))}"
+        for match in re.finditer(
+            r"Safeguard\s+(\d+(?:\.\d+)?):\s*(.+?)(?=\s+Asset Type|\s+\| |\n|$)",
+            text,
+            re.I | re.S,
+        )
+    ]
+
+
+def _cis_controls(text: str) -> list[str]:
+    return [
+        f"CIS Control {match.group(1)} - {_clean_title(match.group(2))}"
+        for match in re.finditer(
+            r"Control\s+(\d+):\s*([A-Z][^.\n]{3,90})",
+            text,
+        )
+    ]
+
+
+def _scf_controls(text: str) -> list[str]:
+    labels: list[str] = []
+    for match in re.finditer(
+        r"SCF Control:\s*(.+?)\s+SCF #:\s*([A-Z]+-\d+(?:\.\d+)?)",
+        text,
+        re.I | re.S,
+    ):
+        labels.append(f"SCF {match.group(2)} - {_clean_title(match.group(1))}")
+    for match in re.finditer(
+        r"SCF Control Name:\s*(.+?)\s+SCF Control #:\s*([A-Z]+-\d+(?:\.\d+)?)",
+        text,
+        re.I | re.S,
+    ):
+        labels.append(f"SCF {match.group(2)} - {_clean_title(match.group(1))}")
+    return labels
+
+
+def _clean_title(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip(" .:-|")
