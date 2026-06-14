@@ -11,7 +11,13 @@ class ChatModel(Protocol):
 
 
 class OpenAIChatClient:
-    def __init__(self, *, api_key: str | None, model: str) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        model: str,
+        max_output_tokens: int | None = None,
+    ) -> None:
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is required when provider is openai")
         try:
@@ -20,12 +26,17 @@ class OpenAIChatClient:
             raise RuntimeError("Install openai to use OpenAIChatClient") from exc
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.max_output_tokens = max_output_tokens
 
     def chat(self, messages: list[dict[str, str]]) -> str:
+        kwargs: dict[str, object] = {}
+        if self.max_output_tokens is not None:
+            kwargs["max_tokens"] = self.max_output_tokens
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
             temperature=0.1,
+            **kwargs,
         )
         content = response.choices[0].message.content
         if not content:
@@ -44,4 +55,3 @@ def chat_client_for_provider(
     if provider == "openai":
         return OpenAIChatClient(api_key=openai_api_key, model=openai_model)
     return OllamaChatClient(model=ollama_model, base_url=ollama_base_url)
-

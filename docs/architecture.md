@@ -58,11 +58,11 @@ Ollama. The prompt instructs the model to:
 When no relevant sources are found, the engine returns an insufficient-evidence response without
 asking the LLM to invent an answer.
 
-The initial generation model is `gemma3:4b`, which is small enough to prove the local pipeline but
-has shown weak consistency for security-control reasoning. The next recommended upgrade is
-`qwen3:14b` if it runs comfortably on the user's RTX 5080; fallback candidates are `gemma3:12b`,
-`qwen3.5:9b`, or a smaller Llama-family model if VRAM pressure is a problem. The embedding model
-should remain `mxbai-embed-large` until evidence shows retrieval quality is the bottleneck.
+The local generation model is `qwen3:14b`, selected as the strongest practical first target for
+the user's RTX 5080 class machine. The original `gemma3:4b` proved the pipeline but showed weak
+consistency for security-control reasoning. Fallback candidates are `gemma3:12b`, `qwen3.5:9b`,
+or a smaller Llama-family model if VRAM pressure is a problem. The embedding model should remain
+`mxbai-embed-large` until evidence shows retrieval quality is the bottleneck.
 
 The answer should move from free-text prompting to an enforced schema:
 
@@ -101,6 +101,16 @@ The endpoint is `POST /api/assessments/foundation-summary`. It returns Managemen
 Introduction, Objective, Key Findings, Strengths, Weaknesses, Risk Exposure, Conclusion, Missing
 Information, source question IDs, and a `postgres_payload` object. Immutable snapshots should be
 created by the application only after analyst approval.
+
+The mock screen at `/mock/foundation` demonstrates this flow without real PostgreSQL. It shows:
+
+- simulated source assessment JSON,
+- draft report sections,
+- classified findings,
+- PostgreSQL-ready draft payload,
+- token estimate/debug output.
+
+OpenAI testing is guarded by token estimation and an explicit `confirm_external_call` flag.
 
 ## Building Block 5: Governance and Delivery
 

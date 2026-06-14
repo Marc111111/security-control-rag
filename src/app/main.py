@@ -6,10 +6,15 @@ from typing import Any, Protocol
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from app.assessment.mock_data import MockFoundationChatModel, sample_foundation_packet
 from app.assessment.schemas import FoundationAssessmentPacket
+from app.assessment.token_estimator import estimate_foundation_summary_tokens
+from app.assessment.workflow import FoundationAssessmentWorkflow
 from app.config import Settings, load_settings
+from app.generation.clients import OpenAIChatClient
 from app.pipeline import GraphRagPipeline
 
 
@@ -74,6 +79,17 @@ class FoundationSummaryRequest(BaseModel):
     debug: bool = False
 
 
+class TokenEstimateRequest(BaseModel):
+    packet: FoundationAssessmentPacket
+    model: str = "gpt-4.1-mini"
+    estimated_output_tokens: int = Field(default=900, ge=100, le=4_000)
+
+
+class OpenAISmokeTestRequest(TokenEstimateRequest):
+    confirm_external_call: bool = False
+    max_estimated_input_tokens: int = Field(default=6_000, ge=500, le=20_000)
+
+
 def create_app(service: GraphRagService | None = None) -> FastAPI:
     app = FastAPI(
         title="Cybersecurity GRC GraphRAG API",
@@ -90,6 +106,10 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
         if runtime_service is None:
             runtime_service = GraphRagPipeline(load_settings())
         return runtime_service
+
+    @app.get("/mock/foundation", response_class=HTMLResponse, include_in_schema=False)
+    def foundation_mock_ui() -> str:
+        return _static_file("foundation_mock.html")
 
     @app.get("/api/health")
     def health(current: GraphRagService = Depends(get_service)) -> dict[str, Any]:  # noqa: B008
@@ -154,6 +174,60 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return response.model_dump()
 
+    @app.get("/api/mock/foundation-packet")
+    def mock_foundation_packet() -> dict[str, Any]:
+        return sample_foundation_packet().model_dump(mode="json")
+
+    @app.post("/api/mock/foundation-summary")
+    def mock_foundation_summary(request: FoundationSummaryRequest) -> dict[str, Any]:
+        workflow = FoundationAssessmentWorkflow(MockFoundationChatModel())
+        return workflow.summarize(request.packet, debug=request.debug).model_dump()
+
+    @app.post("/api/assessments/foundation-summary/token-estimate")
+    def foundation_token_estimate(request: TokenEstimateRequest) -> dict[str, Any]:
+        return estimate_foundation_summary_tokens(
+            request.packet,
+            model=request.model,
+            estimated_output_tokens=request.estimated_output_tokens,
+        ).as_dict()
+
+    @app.post("/api/assessments/foundation-summary/openai-smoke-test")
+    def foundation_openai_smoke_test(request: OpenAISmokeTestRequest) -> dict[str, Any]:
+        if not request.confirm_external_call:
+            raise HTTPException(
+                status_code=400,
+                detail="Set confirm_external_call=true to send this compact packet to OpenAI.",
+            )
+        estimate = estimate_foundation_summary_tokens(
+            request.packet,
+            model=request.model,
+            estimated_output_tokens=request.estimated_output_tokens,
+        )
+        if estimate.estimated_input_tokens > request.max_estimated_input_tokens:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Estimated input tokens exceed the request guard. "
+                    f"Estimated {estimate.estimated_input_tokens}, "
+                    f"limit {request.max_estimated_input_tokens}."
+                ),
+            )
+        settings = load_settings()
+        try:
+            workflow = FoundationAssessmentWorkflow(
+                OpenAIChatClient(
+                    api_key=settings.openai_api_key,
+                    model=request.model,
+                    max_output_tokens=request.estimated_output_tokens,
+                )
+            )
+            response = workflow.summarize(request.packet, debug=True)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        data = response.model_dump()
+        data["token_estimate"] = estimate.as_dict()
+        return data
+
     @app.post("/api/evaluation/feedback")
     def feedback(
         request: FeedbackRequest,
@@ -176,6 +250,11 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def _static_file(name: str) -> str:
+    path = Path(__file__).with_name("static") / name
+    return path.read_text(encoding="utf-8")
 
 
 def main() -> None:

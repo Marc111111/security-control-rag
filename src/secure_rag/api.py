@@ -173,7 +173,7 @@ def load_config_from_env() -> RagRuntimeConfig:
     return RagRuntimeConfig(
         db_path=Path(os.getenv("SECURE_RAG_DB_PATH", "storage/chroma")),
         embedding_model=os.getenv("SECURE_RAG_EMBEDDING_MODEL", "mxbai-embed-large"),
-        generation_model=os.getenv("SECURE_RAG_GENERATION_MODEL", "gemma3:4b"),
+        generation_model=os.getenv("SECURE_RAG_GENERATION_MODEL", "qwen3:14b"),
         top_k=int(os.getenv("SECURE_RAG_TOP_K", "8")),
         min_score=float(os.getenv("SECURE_RAG_MIN_SCORE", "0.6")),
     )

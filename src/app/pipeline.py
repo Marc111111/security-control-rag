@@ -37,9 +37,9 @@ class GraphRagPipeline:
             model=settings.embedding_model,
             base_url=settings.ollama_base_url,
         )
-        self.dense_store = dense_store or self._dense_store(settings)
-        self.keyword_index = KeywordIndex()
-        self.graph_store = graph_store or self._graph_store(settings)
+        self.dense_store = dense_store
+        self.keyword_index: KeywordIndex | None = None
+        self.graph_store = graph_store
         self.chat_model = chat_model or chat_client_for_provider(
             provider=settings.llm_provider,
             ollama_base_url=settings.ollama_base_url,
@@ -50,12 +50,7 @@ class GraphRagPipeline:
         self.extractor = HeuristicGraphExtractor()
         self.foundation_workflow = FoundationAssessmentWorkflow(self.chat_model)
         self.planner = RiskQuestionPlanner()
-        self.retriever = HybridRetriever(
-            embedding_client=self.embedding_client,
-            dense_store=self.dense_store,
-            keyword_index=self.keyword_index,
-            graph_store=self.graph_store,
-        )
+        self.retriever: HybridRetriever | None = None
         self.logger = logger or EvaluationLogger()
 
     def ingest(
@@ -66,16 +61,20 @@ class GraphRagPipeline:
         overlap: int = 200,
         batch_size: int = 64,
     ) -> dict[str, int]:
+        retriever = self._retriever()
         chunks = load_and_chunk_path(source, chunk_size=chunk_size, overlap=overlap)
         total_entities = 0
         total_relationships = 0
         for start in range(0, len(chunks), batch_size):
             batch = chunks[start : start + batch_size]
             embeddings = self.embedding_client.embed([chunk.text for chunk in batch])
-            self.retriever.add_chunks(batch, embeddings)
+            retriever.add_chunks(batch, embeddings)
             for chunk in batch:
                 extraction = self.extractor.extract(chunk)
-                self.graph_store.upsert(extraction.entities, extraction.relationships)
+                self._graph_store_instance().upsert(
+                    extraction.entities,
+                    extraction.relationships,
+                )
                 total_entities += len(extraction.entities)
                 total_relationships += len(extraction.relationships)
         return {
@@ -94,7 +93,10 @@ class GraphRagPipeline:
     ) -> GraphRagAnswer:
         full_question = _merge_question_context(question, context)
         plan = self.planner.plan(full_question)
-        evidence, graph_rows = self.retriever.retrieve(plan, top_k=top_k or self.settings.top_k)
+        evidence, graph_rows = self._retriever().retrieve(
+            plan,
+            top_k=top_k or self.settings.top_k,
+        )
         if not evidence:
             return insufficient_evidence_answer()
         messages = build_structured_answer_prompt(full_question, plan, evidence, graph_rows)
@@ -138,7 +140,10 @@ class GraphRagPipeline:
 
     def retrieve_debug(self, question: str, *, top_k: int | None = None) -> dict[str, Any]:
         plan = self.planner.plan(question)
-        evidence, graph_rows = self.retriever.retrieve(plan, top_k=top_k or self.settings.top_k)
+        evidence, graph_rows = self._retriever().retrieve(
+            plan,
+            top_k=top_k or self.settings.top_k,
+        )
         return {
             "plan": plan.model_dump(),
             "retrieved_chunks": [hit.model_dump() for hit in evidence],
@@ -152,6 +157,31 @@ class GraphRagPipeline:
         debug: bool = False,
     ) -> FoundationSummaryResponse:
         return self.foundation_workflow.summarize(packet, debug=debug)
+
+    def _retriever(self) -> HybridRetriever:
+        if self.retriever is None:
+            self.retriever = HybridRetriever(
+                embedding_client=self.embedding_client,
+                dense_store=self._dense_store_instance(),
+                keyword_index=self._keyword_index_instance(),
+                graph_store=self._graph_store_instance(),
+            )
+        return self.retriever
+
+    def _dense_store_instance(self) -> DenseStore:
+        if self.dense_store is None:
+            self.dense_store = self._dense_store(self.settings)
+        return self.dense_store
+
+    def _keyword_index_instance(self) -> KeywordIndex:
+        if self.keyword_index is None:
+            self.keyword_index = KeywordIndex()
+        return self.keyword_index
+
+    def _graph_store_instance(self) -> GraphStore:
+        if self.graph_store is None:
+            self.graph_store = self._graph_store(self.settings)
+        return self.graph_store
 
     @staticmethod
     def _dense_store(settings: Settings) -> DenseStore:

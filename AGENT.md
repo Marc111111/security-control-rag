@@ -28,11 +28,10 @@ Details live in `docs/architecture.md` and decisions live in `docs/decisions/`.
 ## Decisions
 
 - Language: Python 3.11.
-- Local generation model: Gemma through Ollama. The current machine currently has `gemma3:4b`.
-  This was enough to prove the pipeline but produces average reasoning and inconsistent answer
-  shape on security-control recommendation tasks. The next recommended model upgrade for the
-  user's RTX 5080 class machine is `qwen3:14b` if it runs comfortably; fallback candidates are
-  `gemma3:12b`, `qwen3.5:9b`, or a smaller Llama-family model if VRAM pressure is a problem.
+- Local generation model: `qwen3:14b` through Ollama. The machine initially had `gemma3:4b`,
+  which was enough to prove the pipeline but produced average reasoning and inconsistent answer
+  shape on security-control recommendation tasks. Fallback candidates are `gemma3:12b`,
+  `qwen3.5:9b`, or a smaller Llama-family model if VRAM pressure is a problem.
 - Embedding model: start with `mxbai-embed-large` through Ollama; fallback option is
   `nomic-embed-text`. Keep `mxbai-embed-large` for now unless retrieval evidence proves it is
   the bottleneck.
@@ -177,3 +176,15 @@ Purpose:
 
 This is the prototype layer. The deeper Risk Evaluation Agent should later consume the weaknesses
 and run the GraphRAG gap -> threat -> vulnerability -> risk -> control workflow.
+
+After that, a visible mockup was added at `/mock/foundation`. It uses simulated PostgreSQL input
+and output and can run entirely through mock endpoints:
+
+- `GET /api/mock/foundation-packet`
+- `POST /api/mock/foundation-summary`
+
+It also exposes token estimation through
+`POST /api/assessments/foundation-summary/token-estimate` and a guarded OpenAI smoke test through
+`POST /api/assessments/foundation-summary/openai-smoke-test`. The smoke test must require
+`confirm_external_call=true` and must reject prompts above the configured token guard. Do not
+remove that safety guard.

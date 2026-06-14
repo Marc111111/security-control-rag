@@ -148,6 +148,36 @@ Human-generated comments are sanitized before prompt construction. Full complian
 as strength; partial and no compliance are classified as weakness. The endpoint does not create
 immutable snapshots itself; that remains an application persistence decision after analyst review.
 
+### Mock UI and Mock Endpoints
+
+Open the local mockup at:
+
+```text
+http://127.0.0.1:8000/mock/foundation
+```
+
+It simulates PostgreSQL input and output without requiring PostgreSQL, Qdrant, Neo4j, Ollama, or
+OpenAI.
+
+Mock endpoints:
+
+- `GET /api/mock/foundation-packet`
+- `POST /api/mock/foundation-summary`
+
+### Token Estimate and OpenAI Smoke Test
+
+`POST /api/assessments/foundation-summary/token-estimate` estimates prompt size and cost before
+any external API call.
+
+`POST /api/assessments/foundation-summary/openai-smoke-test` makes a real OpenAI call only when:
+
+- `confirm_external_call` is `true`,
+- `OPENAI_API_KEY` is configured,
+- the estimated input tokens are below `max_estimated_input_tokens`.
+
+The smoke test sends only the compact foundation assessment packet and generated prompt. It does
+not send full documents, vector stores, evidence files, or the GraphRAG corpus.
+
 ## Start the Server
 
 ```powershell
@@ -166,7 +196,7 @@ Every `/api/query` call follows this order:
 3. Search the local Chroma vector database.
 4. If no source chunks meet the relevance threshold, return `insufficient_evidence: true`
    without asking Gemma to answer.
-5. If source chunks are found, send only those excerpts to `gemma3:4b`.
+5. If source chunks are found, send only those excerpts to `qwen3:14b`.
 6. Return the generated answer plus source metadata.
 
 The API is therefore strict corpus-first. General model knowledge is not the intended source of

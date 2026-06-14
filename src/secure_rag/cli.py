@@ -28,7 +28,7 @@ def main(argv: list[str] | None = None) -> int:
     query.add_argument("--db", required=True, help="ChromaDB persistence directory")
     query.add_argument("--criteria", required=True, help="Risk, vulnerability, tier, or criteria")
     query.add_argument("--embedding-model", default="mxbai-embed-large")
-    query.add_argument("--generation-model", default="gemma3:4b")
+    query.add_argument("--generation-model", default="qwen3:14b")
     query.add_argument("--top-k", type=int, default=8)
     query.add_argument("--min-score", type=float, default=0.6)
 

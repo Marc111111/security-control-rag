@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Foundation Summary Mock</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f6f3;
+        --panel: #ffffff;
+        --ink: #1d2730;
+        --muted: #697789;
+        --line: #d8ded6;
+        --accent: #0f766e;
+        --accent-strong: #0b5f59;
+        --warn: #a8550d;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        color: var(--ink);
+      }
+      header {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 24px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfa;
+      }
+      h1 {
+        margin: 0;
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: 0;
+      }
+      main {
+        display: grid;
+        grid-template-columns: minmax(360px, 0.9fr) minmax(480px, 1.1fr);
+        gap: 16px;
+        padding: 16px;
+        height: calc(100vh - 64px);
+      }
+      section {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #24313b;
+      }
+      .panel-body {
+        padding: 14px;
+        overflow: auto;
+      }
+      textarea {
+        width: 100%;
+        min-height: 100%;
+        resize: none;
+        border: 0;
+        outline: 0;
+        padding: 14px;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+        color: #22313d;
+      }
+      .input-panel {
+        flex: 1;
+        min-height: 0;
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      button {
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: white;
+        border-radius: 6px;
+        padding: 9px 12px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: white;
+        color: var(--accent-strong);
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+      .status {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .field {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .field:last-child {
+        border-bottom: 0;
+      }
+      .label {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 6px;
+      }
+      .value {
+        font-size: 14px;
+        line-height: 1.45;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      li {
+        margin: 4px 0;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 12px;
+        font-weight: 700;
+        background: #e8f3f1;
+        color: #0b5f59;
+      }
+      .warning {
+        color: var(--warn);
+      }
+      @media (max-width: 980px) {
+        main {
+          height: auto;
+          grid-template-columns: 1fr;
+        }
+        .input-panel {
+          min-height: 520px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Foundation Assessment Summary Mock</h1>
+      <span class="pill">Simulated PostgreSQL</span>
+    </header>
+    <main>
+      <section>
+        <div class="panel input-panel">
+          <div class="panel-header">
+            <div class="panel-title">Source PostgreSQL Assessment Packet</div>
+            <button class="secondary" id="reset">Reset</button>
+          </div>
+          <textarea id="packet"></textarea>
+        </div>
+        <div class="actions">
+          <button id="runMock">Run Simulation</button>
+          <button class="secondary" id="estimate">Estimate GPT-4.1 mini Tokens</button>
+          <button class="secondary" id="runLive">Run Live Provider</button>
+        </div>
+        <div class="status" id="status">Ready.</div>
+      </section>
+      <section>
+        <div class="grid">
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">Draft Report Fields</div></div>
+            <div class="panel-body" id="draft"></div>
+          </div>
+          <div class="panel">
+            <div class="panel-header"><div class="panel-title">Findings</div></div>
+            <div class="panel-body" id="findings"></div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Target PostgreSQL Payload</div></div>
+          <div class="panel-body"><pre id="postgres"></pre></div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">API / Token Debug</div></div>
+          <div class="panel-body"><pre id="debug"></pre></div>
+        </div>
+      </section>
+    </main>
+    <script>
+      const packetEl = document.querySelector("#packet");
+      const statusEl = document.querySelector("#status");
+      const draftEl = document.querySelector("#draft");
+      const findingsEl = document.querySelector("#findings");
+      const postgresEl = document.querySelector("#postgres");
+      const debugEl = document.querySelector("#debug");
+      let samplePacket = null;
+
+      async function loadSample() {
+        const response = await fetch("/api/mock/foundation-packet");
+        samplePacket = await response.json();
+        packetEl.value = JSON.stringify(samplePacket, null, 2);
+      }
+
+      function packetPayload() {
+        return { packet: JSON.parse(packetEl.value), debug: true };
+      }
+
+      async function postJson(url, body) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || response.statusText);
+        return data;
+      }
+
+      function setBusy(isBusy, text) {
+        document.querySelectorAll("button").forEach((button) => (button.disabled = isBusy));
+        statusEl.textContent = text;
+      }
+
+      function renderResponse(data) {
+        const draft = data.draft || {};
+        draftEl.innerHTML = [
+          field("Management Summary", draft.management_summary),
+          field("Introduction", draft.introduction),
+          field("Objective", draft.objective),
+          field("Risk Exposure", draft.risk_exposure),
+          field("Conclusion", draft.conclusion),
+          listField("Key Findings", draft.key_findings),
+          listField("Strengths", draft.strengths),
+          listField("Weaknesses", draft.weaknesses),
+          listField("Missing Information", draft.missing_information),
+        ].join("");
+        findingsEl.innerHTML = Object.entries(data.findings || {})
+          .map(([name, items]) => listField(name, items.map((item) => item.summary)))
+          .join("");
+        postgresEl.textContent = JSON.stringify(data.postgres_payload || {}, null, 2);
+        debugEl.textContent = JSON.stringify(data.debug || {}, null, 2);
+      }
+
+      function field(label, value) {
+        return `<div class="field"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value || "")}</div></div>`;
+      }
+
+      function listField(label, items = []) {
+        const values = items.length ? items : ["None"];
+        return `<div class="field"><div class="label">${escapeHtml(label)}</div><ul>${values
+          .map((item) => `<li>${escapeHtml(item)}</li>`)
+          .join("")}</ul></div>`;
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;");
+      }
+
+      document.querySelector("#reset").addEventListener("click", () => {
+        packetEl.value = JSON.stringify(samplePacket, null, 2);
+      });
+
+      document.querySelector("#runMock").addEventListener("click", async () => {
+        try {
+          setBusy(true, "Running simulated workflow...");
+          const data = await postJson("/api/mock/foundation-summary", packetPayload());
+          renderResponse(data);
+          statusEl.textContent = "Simulation complete. No external model or database was used.";
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        } finally {
+          setBusy(false, statusEl.textContent);
+        }
+      });
+
+      document.querySelector("#estimate").addEventListener("click", async () => {
+        try {
+          setBusy(true, "Estimating token usage...");
+          const data = await postJson("/api/assessments/foundation-summary/token-estimate", {
+            ...packetPayload(),
+            model: "gpt-4.1-mini",
+          });
+          debugEl.textContent = JSON.stringify(data, null, 2);
+          statusEl.textContent = `Estimated cost: $${data.estimated_cost_usd}`;
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        } finally {
+          setBusy(false, statusEl.textContent);
+        }
+      });
+
+      document.querySelector("#runLive").addEventListener("click", async () => {
+        try {
+          setBusy(true, "Running configured local/OpenAI provider...");
+          const data = await postJson("/api/assessments/foundation-summary", packetPayload());
+          renderResponse(data);
+          statusEl.textContent = "Live provider run complete.";
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        } finally {
+          setBusy(false, statusEl.textContent);
+        }
+      });
+
+      loadSample().then(() => document.querySelector("#runMock").click());
+    </script>
+  </body>
+</html>

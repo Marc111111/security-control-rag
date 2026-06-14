@@ -1,5 +1,5 @@
 param(
-    [string]$GenerationModel = "gemma3:4b",
+    [string]$GenerationModel = "qwen3:14b",
     [string]$EmbeddingModel = "mxbai-embed-large",
     [switch]$UseProjectModelStore
 )
@@ -19,4 +19,3 @@ ollama --version
 ollama pull $GenerationModel
 ollama pull $EmbeddingModel
 ollama list
-

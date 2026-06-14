@@ -18,7 +18,7 @@ from secure_rag.vector_store import ChromaVectorStore
 class RagRuntimeConfig:
     db_path: Path = Path("storage/chroma")
     embedding_model: str = "mxbai-embed-large"
-    generation_model: str = "gemma3:4b"
+    generation_model: str = "qwen3:14b"
     top_k: int = 8
     min_score: float = 0.6
 

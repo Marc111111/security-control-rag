@@ -39,6 +39,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 secure_rag = ["static/*"]
+app = ["static/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

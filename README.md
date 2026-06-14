@@ -56,6 +56,12 @@ Start the advanced API:
 grc-graphrag-api
 ```
 
+Open the Foundation Summary mock screen:
+
+```text
+http://127.0.0.1:8000/mock/foundation
+```
+
 Query it:
 
 ```powershell
@@ -157,12 +163,33 @@ The workflow sanitizes human-generated vendor and analyst comments before placin
 prompt. Full compliance becomes strengths; partial and no compliance become weaknesses. The LLM
 may draft the business wording, but deterministic code prepares the findings and fallback summary.
 
+For a no-database demo, the mock screen calls:
+
+- `GET /api/mock/foundation-packet`
+- `POST /api/mock/foundation-summary`
+
+For a cost check before OpenAI testing, call:
+
+```http
+POST /api/assessments/foundation-summary/token-estimate
+```
+
+The guarded OpenAI smoke-test endpoint is:
+
+```http
+POST /api/assessments/foundation-summary/openai-smoke-test
+```
+
+It refuses to run unless `confirm_external_call` is `true` and the estimated input size is below
+the request guard. This is intentional: the prototype sends only the compact assessment packet,
+not full documents or vector-store contents.
+
 ## Original Local RAG Prototype
 
 The first target stack is:
 
 - Python 3.11
-- Ollama with a local Gemma model for generation
+- Ollama with a local Qwen model for generation
 - Ollama embedding model for local embeddings
 - ChromaDB for persistent vector search
 - pytest for unit and integration tests

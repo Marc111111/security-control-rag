@@ -88,7 +88,7 @@ def test_health_returns_runtime_configuration() -> None:
     data = response.json()
     assert data["mode"] == "strict_corpus_first"
     assert data["db_path"] == "storage/test"
-    assert data["generation_model"] == "gemma3:4b"
+    assert data["generation_model"] == "qwen3:14b"
 
 
 def test_query_accepts_natural_language_and_context() -> None:
