@@ -80,6 +80,28 @@ The answer should move from free-text prompting to an enforced schema:
 The UI can then render clean sections without depending on the model to format paragraphs and
 bullets perfectly.
 
+## Foundation Assessment Flow
+
+The first SaaS-facing AI use case is a Foundation Summary Agent. It is deliberately narrower than
+the full risk evaluation workflow.
+
+```text
+PostgreSQL assessment rows
+  -> canonical assessment packet
+  -> sanitize human-generated comments
+  -> classify questionnaire results
+  -> full compliance -> strengths
+  -> partial/no compliance -> weaknesses
+  -> LLM drafts business-friendly sections
+  -> deterministic fallback if model output is invalid
+  -> PostgreSQL-ready draft payload
+```
+
+The endpoint is `POST /api/assessments/foundation-summary`. It returns Management Summary,
+Introduction, Objective, Key Findings, Strengths, Weaknesses, Risk Exposure, Conclusion, Missing
+Information, source question IDs, and a `postgres_payload` object. Immutable snapshots should be
+created by the application only after analyst approval.
+
 ## Building Block 5: Governance and Delivery
 
 The project uses:

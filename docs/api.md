@@ -79,6 +79,75 @@ the LLM to generate an answer.
 `POST /api/evaluation/feedback` records manual `relevant` / `not relevant` feedback for retrieved
 chunks.
 
+## Foundation Assessment Summary
+
+`POST /api/assessments/foundation-summary`
+
+This endpoint supports the first SaaS prototype. It accepts one canonical vendor assessment packet
+containing vendor profile data, tier information, questionnaire results, linked controls, vendor
+comments, analyst comments, and evidence descriptions. It returns structured draft report fields
+that can be inserted into PostgreSQL as transitory draft values.
+
+```json
+{
+  "packet": {
+    "assessment_id": "A-100",
+    "vendor": {
+      "vendor_id": "V-1",
+      "name": "Acme SaaS",
+      "vendor_type": "SaaS provider",
+      "business_relationship": "customer data processing"
+    },
+    "tier": {
+      "level": 2,
+      "definition": "Important vendor with access to sensitive business data.",
+      "attributes": []
+    },
+    "questionnaire_results": []
+  },
+  "debug": false
+}
+```
+
+Response:
+
+```json
+{
+  "assessment_id": "A-100",
+  "vendor_id": "V-1",
+  "draft": {
+    "management_summary": "",
+    "introduction": "",
+    "objective": "",
+    "key_findings": [],
+    "strengths": [],
+    "weaknesses": [],
+    "risk_exposure": "",
+    "conclusion": "",
+    "missing_information": [],
+    "source_question_ids": [],
+    "from_assessment_data": "",
+    "general_model_reasoning": ""
+  },
+  "findings": {
+    "strengths": [],
+    "weaknesses": [],
+    "unknowns": []
+  },
+  "postgres_payload": {
+    "assessment_id": "A-100",
+    "vendor_id": "V-1",
+    "draft_sections": {},
+    "snapshot_ready": false,
+    "source_question_ids": []
+  }
+}
+```
+
+Human-generated comments are sanitized before prompt construction. Full compliance is classified
+as strength; partial and no compliance are classified as weakness. The endpoint does not create
+immutable snapshots itself; that remains an application persistence decision after analyst review.
+
 ## Start the Server
 
 ```powershell

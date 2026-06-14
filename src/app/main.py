@@ -8,6 +8,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
+from app.assessment.schemas import FoundationAssessmentPacket
 from app.config import Settings, load_settings
 from app.pipeline import GraphRagPipeline
 
@@ -38,6 +39,14 @@ class GraphRagService(Protocol):
     def retrieve_debug(self, question: str, *, top_k: int | None = None) -> dict[str, Any]:
         ...
 
+    def foundation_summary(
+        self,
+        packet: FoundationAssessmentPacket,
+        *,
+        debug: bool = False,
+    ) -> object:
+        ...
+
 
 class IngestRequest(BaseModel):
     source: str = Field(..., min_length=1)
@@ -58,6 +67,11 @@ class FeedbackRequest(BaseModel):
     chunk_id: str = Field(..., min_length=1)
     relevant: bool
     notes: str = ""
+
+
+class FoundationSummaryRequest(BaseModel):
+    packet: FoundationAssessmentPacket
+    debug: bool = False
 
 
 def create_app(service: GraphRagService | None = None) -> FastAPI:
@@ -128,6 +142,17 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
             return current.retrieve_debug(request.question, top_k=request.top_k)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/assessments/foundation-summary")
+    def foundation_summary(
+        request: FoundationSummaryRequest,
+        current: GraphRagService = Depends(get_service),  # noqa: B008
+    ) -> dict[str, Any]:
+        try:
+            response = current.foundation_summary(request.packet, debug=request.debug)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return response.model_dump()
 
     @app.post("/api/evaluation/feedback")
     def feedback(

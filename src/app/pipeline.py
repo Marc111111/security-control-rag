@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from app.assessment.schemas import FoundationAssessmentPacket, FoundationSummaryResponse
+from app.assessment.workflow import FoundationAssessmentWorkflow
 from app.config import Settings
 from app.evaluation.logger import EvaluationLogger
 from app.generation.clients import ChatModel, chat_client_for_provider
@@ -46,6 +48,7 @@ class GraphRagPipeline:
             openai_model=settings.openai_model,
         )
         self.extractor = HeuristicGraphExtractor()
+        self.foundation_workflow = FoundationAssessmentWorkflow(self.chat_model)
         self.planner = RiskQuestionPlanner()
         self.retriever = HybridRetriever(
             embedding_client=self.embedding_client,
@@ -141,6 +144,14 @@ class GraphRagPipeline:
             "retrieved_chunks": [hit.model_dump() for hit in evidence],
             "graph_rows": graph_rows,
         }
+
+    def foundation_summary(
+        self,
+        packet: FoundationAssessmentPacket,
+        *,
+        debug: bool = False,
+    ) -> FoundationSummaryResponse:
+        return self.foundation_workflow.summarize(packet, debug=debug)
 
     @staticmethod
     def _dense_store(settings: Settings) -> DenseStore:

@@ -158,3 +158,22 @@ new implementation lives under `src/app` and is intentionally modular:
 
 The new API entrypoint is `grc-graphrag-api`. The old `security-rag-api` remains for compatibility.
 Qdrant and Neo4j are defined in `docker-compose.yml`; `.env.example` documents local settings.
+
+Also on 2026-06-14, a Foundation Assessment Summary Agent was added as the first SaaS-facing AI
+prototype before full Risk Evaluation. It lives under `app/assessment/` and exposes
+`POST /api/assessments/foundation-summary`.
+
+Purpose:
+
+- Accept canonical PostgreSQL-shaped vendor assessment data.
+- Include vendor profile, tier level/attributes, questionnaire results, linked controls,
+  vendor comments, analyst comments, compliance status, maturity, and evidence descriptions.
+- Sanitize human-generated comments before LLM prompting.
+- Classify full compliance as strengths and partial/no compliance as weaknesses.
+- Generate Management Summary, Introduction, Objective, Key Findings, Strengths, Weaknesses,
+  Risk Exposure, Conclusion, and Missing Information.
+- Return `postgres_payload` for draft insertion; immutable snapshots remain an application
+  decision after analyst approval.
+
+This is the prototype layer. The deeper Risk Evaluation Agent should later consume the weaknesses
+and run the GraphRAG gap -> threat -> vulnerability -> risk -> control workflow.

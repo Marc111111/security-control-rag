@@ -88,6 +88,75 @@ $env:OPENAI_API_KEY = "<your key>"
 The older `secure_rag` Chroma-based API is still present for compatibility while the GraphRAG
 prototype matures.
 
+## Foundation Assessment Summary Prototype
+
+The first SaaS-facing AI workflow is the Foundation Summary Agent. It accepts a canonical vendor
+assessment packet from PostgreSQL-shaped data and returns draft report sections ready to store back
+as transitory fields or later-approved snapshots.
+
+Endpoint:
+
+```http
+POST /api/assessments/foundation-summary
+```
+
+Example request:
+
+```json
+{
+  "packet": {
+    "assessment_id": "A-100",
+    "vendor": {
+      "vendor_id": "V-1",
+      "name": "Acme SaaS",
+      "vendor_type": "SaaS provider",
+      "business_relationship": "customer data processing"
+    },
+    "tier": {
+      "level": 2,
+      "definition": "Important vendor with access to sensitive business data.",
+      "attributes": []
+    },
+    "questionnaire_results": [
+      {
+        "question_id": "Q2",
+        "question_text": "Do you run anti-malware on endpoints?",
+        "control": {
+          "framework": "NIST CSF",
+          "control_id": "PR.PS-01",
+          "title": "Endpoint protection",
+          "control_type": "preventative"
+        },
+        "response": "No",
+        "vendor_comment": "No endpoint tool is currently deployed.",
+        "analyst_comment": "No anti-malware solution is in place.",
+        "compliance": "no",
+        "maturity": "basic",
+        "evidence": []
+      }
+    ]
+  },
+  "debug": true
+}
+```
+
+Response fields include:
+
+- `draft.management_summary`
+- `draft.introduction`
+- `draft.objective`
+- `draft.key_findings`
+- `draft.strengths`
+- `draft.weaknesses`
+- `draft.risk_exposure`
+- `draft.conclusion`
+- `draft.missing_information`
+- `postgres_payload`
+
+The workflow sanitizes human-generated vendor and analyst comments before placing them in an LLM
+prompt. Full compliance becomes strengths; partial and no compliance become weaknesses. The LLM
+may draft the business wording, but deterministic code prepares the findings and fallback summary.
+
 ## Original Local RAG Prototype
 
 The first target stack is:
