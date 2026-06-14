@@ -89,6 +89,7 @@ class TokenEstimateRequest(BaseModel):
 class OpenAISmokeTestRequest(TokenEstimateRequest):
     confirm_external_call: bool = False
     max_estimated_input_tokens: int = Field(default=6_000, ge=500, le=20_000)
+    openai_api_key: str | None = Field(default=None, exclude=True)
 
 
 class FoundationModelRunRequest(TokenEstimateRequest):
@@ -96,6 +97,7 @@ class FoundationModelRunRequest(TokenEstimateRequest):
     debug: bool = True
     confirm_external_call: bool = False
     max_estimated_input_tokens: int = Field(default=6_000, ge=500, le=20_000)
+    openai_api_key: str | None = Field(default=None, exclude=True)
 
 
 def create_app(service: GraphRagService | None = None) -> FastAPI:
@@ -224,7 +226,7 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
         try:
             workflow = FoundationAssessmentWorkflow(
                 OpenAIChatClient(
-                    api_key=settings.openai_api_key,
+                    api_key=request.openai_api_key or settings.openai_api_key,
                     model=request.model,
                     max_output_tokens=request.estimated_output_tokens,
                 )
@@ -265,6 +267,7 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
                     model=request.model,
                     settings=settings,
                     max_output_tokens=request.estimated_output_tokens,
+                    openai_api_key=request.openai_api_key,
                 )
             )
             response = workflow.summarize(request.packet, debug=request.debug)
@@ -314,12 +317,13 @@ def _chat_model_for_comparison(
     model: str,
     settings: Settings,
     max_output_tokens: int,
+    openai_api_key: str | None = None,
 ) -> object:
     if provider == "mock":
         return MockFoundationChatModel()
     if provider == "openai":
         return OpenAIChatClient(
-            api_key=settings.openai_api_key,
+            api_key=openai_api_key or settings.openai_api_key,
             model=model,
             max_output_tokens=max_output_tokens,
         )

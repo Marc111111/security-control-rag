@@ -99,7 +99,7 @@
       }
       .controls {
         display: grid;
-        grid-template-columns: minmax(180px, 260px) auto;
+        grid-template-columns: minmax(180px, 260px) minmax(240px, 1fr) auto;
         gap: 10px;
         align-items: end;
       }
@@ -110,7 +110,8 @@
         color: var(--muted);
         margin-bottom: 5px;
       }
-      select {
+      select,
+      input[type="password"] {
         width: 100%;
         height: 38px;
         border: 1px solid var(--line);
@@ -267,6 +268,16 @@
               <option value="gpt-5.5" data-provider="openai">gpt-5.5 OpenAI</option>
             </select>
           </div>
+          <div class="control">
+            <label for="apiKey">OpenAI API key for this request only</label>
+            <input
+              id="apiKey"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="sk-..."
+            />
+          </div>
           <label class="check">
             <input type="checkbox" id="allowExternal" />
             Allow external OpenAI call for selected model
@@ -305,6 +316,7 @@
       const debugEl = document.querySelector("#debug");
       const modelSelect = document.querySelector("#modelSelect");
       const allowExternal = document.querySelector("#allowExternal");
+      const apiKeyEl = document.querySelector("#apiKey");
       const priceEl = document.querySelector("#price");
       let samplePacket = null;
 
@@ -325,13 +337,17 @@
 
       function modelPayload() {
         const selected = selectedModel();
-        return {
+        const payload = {
           ...packetPayload(),
           model: selected.model,
           provider: selected.provider,
           estimated_output_tokens: 900,
           confirm_external_call: allowExternal.checked,
         };
+        if (selected.provider === "openai" && apiKeyEl.value.trim()) {
+          payload.openai_api_key = apiKeyEl.value.trim();
+        }
+        return payload;
       }
 
       async function postJson(url, body) {

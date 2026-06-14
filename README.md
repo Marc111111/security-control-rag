@@ -189,6 +189,10 @@ such as `qwen3:14b`, estimate OpenAI model costs, and run OpenAI models only whe
 checkbox is enabled. Each comparison run returns `model_run.token_estimate` with estimated input
 tokens, output tokens, total tokens, and price.
 
+The mock screen can accept an OpenAI API key for a single request. The key is not saved by the
+application and is not returned in debug output; use `.env` for a longer-lived local development
+configuration.
+
 ## Original Local RAG Prototype
 
 The first target stack is:

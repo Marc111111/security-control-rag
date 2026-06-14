@@ -193,3 +193,7 @@ The mock screen now includes a runtime model selector backed by
 `POST /api/assessments/foundation-summary/model-run`. It supports `mock`, `ollama`, and `openai`
 providers. Every run must return `model_run.token_estimate` so the UI can show estimated request
 price. OpenAI runs must remain blocked unless `confirm_external_call=true`.
+
+The mock screen also accepts a request-scoped OpenAI API key. Never persist that key, include it in
+debug payloads, or return it in API responses. `.env` remains the option for longer-lived local
+development keys.

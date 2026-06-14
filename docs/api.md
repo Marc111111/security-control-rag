@@ -189,6 +189,7 @@ Request fields:
 - `provider`: `mock`, `ollama`, or `openai`
 - `model`: for example `qwen3:14b`, `gpt-5.4-mini`, or `gpt-4.1-mini`
 - `confirm_external_call`: required for OpenAI calls
+- `openai_api_key`: optional request-scoped key for one OpenAI call
 
 The response includes `model_run.token_estimate` so each request can display estimated price next
 to the generated result.

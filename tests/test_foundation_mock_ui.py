@@ -13,6 +13,7 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "/api/assessments/foundation-summary/model-run" in response.text
     assert "gpt-5.4-mini OpenAI" in response.text
     assert "qwen3:14b local" in response.text
+    assert "OpenAI API key for this request only" in response.text
 
 
 def test_mock_foundation_summary_endpoint_runs_without_external_services() -> None:
@@ -74,6 +75,24 @@ def test_model_run_blocks_openai_without_checkbox_confirmation() -> None:
     response = client.post(
         "/api/assessments/foundation-summary/model-run",
         json={"packet": packet, "provider": "openai", "model": "gpt-5.4-mini"},
+    )
+
+    assert response.status_code == 400
+    assert "External OpenAI call blocked" in response.json()["detail"]
+
+
+def test_model_run_accepts_request_scoped_api_key_but_still_requires_confirmation() -> None:
+    client = TestClient(create_app())
+    packet = client.get("/api/mock/foundation-packet").json()
+
+    response = client.post(
+        "/api/assessments/foundation-summary/model-run",
+        json={
+            "packet": packet,
+            "provider": "openai",
+            "model": "gpt-5.4-mini",
+            "openai_api_key": "sk-test-not-used",
+        },
     )
 
     assert response.status_code == 400
