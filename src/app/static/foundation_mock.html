@@ -320,6 +320,7 @@
           model: modelEl.value,
           confirm_external_call: confirmEl.checked,
           estimated_output_tokens: 1200,
+          max_estimated_input_tokens: 24000,
         };
         if (providerEl.value === "openai" && keyEl.value.trim()) model.openai_api_key = keyEl.value.trim();
         return {
@@ -328,7 +329,7 @@
             payload: JSON.parse(packetEl.value),
           },
           model,
-          top_k: 10,
+          top_k: 8,
           debug: true,
         };
       }

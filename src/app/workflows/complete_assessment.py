@@ -28,7 +28,7 @@ class ModelSelection(BaseModel):
     openai_api_key: str | None = Field(default=None, exclude=True)
     confirm_external_call: bool = False
     estimated_output_tokens: int = Field(default=1_200, ge=200, le=6_000)
-    max_estimated_input_tokens: int = Field(default=16_000, ge=500, le=60_000)
+    max_estimated_input_tokens: int = Field(default=24_000, ge=500, le=60_000)
 
 
 class AssessmentInputSource(BaseModel):
@@ -461,27 +461,73 @@ def _rag_answer_dump(answer: GraphRagAnswer) -> dict[str, Any]:
 def _compact_rag_evidence(rag_answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     compact: list[dict[str, Any]] = []
     for answer in rag_answers:
-        risk_answer = answer.get("answer") or {}
+        risk_answer = _compact_risk_answer(answer.get("answer") or {})
         sources = answer.get("sources") or []
         retrieved = (answer.get("debug") or {}).get("retrieved_chunks") or []
         compact.append(
             {
                 "answer": risk_answer,
                 "insufficient_evidence": answer.get("insufficient_evidence", False),
-                "sources": sources[:8],
+                "sources": [_compact_source(source) for source in sources[:5]],
                 "retrieved_chunks": [
                     {
                         "score": item.get("score"),
                         "source": item.get("source"),
                         "retrieval_method": item.get("retrieval_method"),
-                        "metadata": (item.get("chunk") or {}).get("metadata", {}),
-                        "text": ((item.get("chunk") or {}).get("text") or "")[:900],
+                        "metadata": _compact_metadata(
+                            (item.get("chunk") or {}).get("metadata", {})
+                        ),
+                        "text": ((item.get("chunk") or {}).get("text") or "")[:350],
                     }
-                    for item in retrieved[:8]
+                    for item in retrieved[:5]
                 ],
             }
         )
     return compact
+
+
+def _compact_risk_answer(answer: dict[str, Any]) -> dict[str, Any]:
+    keys = [
+        "executive_summary",
+        "assumptions",
+        "threats",
+        "vulnerabilities",
+        "risks",
+        "recommended_controls",
+        "risk_control_matrix",
+        "missing_information",
+        "from_retrieved_evidence",
+        "general_model_reasoning",
+    ]
+    compact = {key: answer.get(key) for key in keys if answer.get(key)}
+    if "risk_control_matrix" in compact:
+        compact["risk_control_matrix"] = compact["risk_control_matrix"][:5]
+    return compact
+
+
+def _compact_source(source: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": source.get("id"),
+        "source": source.get("source"),
+        "score": source.get("score"),
+        "retrieval_method": source.get("retrieval_method"),
+        "metadata": _compact_metadata(source.get("metadata", {})),
+    }
+
+
+def _compact_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: metadata.get(key)
+        for key in [
+            "filename",
+            "document_type",
+            "page_or_section",
+            "framework",
+            "control_id",
+            "source_path",
+        ]
+        if metadata.get(key) is not None
+    }
 
 
 def _findings_dump(findings: dict[str, list[AssessmentFinding]]) -> dict[str, list[dict[str, Any]]]:

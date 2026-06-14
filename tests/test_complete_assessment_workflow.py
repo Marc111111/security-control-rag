@@ -150,3 +150,52 @@ def test_complete_assessment_rejects_openai_without_confirmation(
 
     assert response.status_code == 400
     assert "confirm_external_call" in response.json()["detail"]
+
+
+def test_compact_rag_evidence_removes_large_debug_payloads() -> None:
+    compact = complete_assessment._compact_rag_evidence(
+        [
+            {
+                "answer": {
+                    "executive_summary": "Summary",
+                    "recommended_controls": ["CIS Safeguard 10.1"],
+                    "source_citations": [{"metadata": {"huge": "x" * 20_000}}],
+                },
+                "sources": [
+                    {
+                        "id": "S1",
+                        "source": "standards/cis.pdf",
+                        "score": 0.9,
+                        "retrieval_method": "keyword",
+                        "metadata": {
+                            "filename": "cis.pdf",
+                            "source_path": "standards/cis.pdf",
+                            "unused": "x" * 20_000,
+                        },
+                    }
+                ],
+                "debug": {
+                    "prompt_messages": [{"content": "x" * 20_000}],
+                    "retrieved_chunks": [
+                        {
+                            "score": 0.9,
+                            "source": "standards/cis.pdf",
+                            "retrieval_method": "keyword",
+                            "chunk": {
+                                "text": "A" * 2_000,
+                                "metadata": {
+                                    "filename": "cis.pdf",
+                                    "source_path": "standards/cis.pdf",
+                                    "unused": "x" * 20_000,
+                                },
+                            },
+                        }
+                    ],
+                },
+            }
+        ]
+    )
+
+    assert "source_citations" not in compact[0]["answer"]
+    assert "unused" not in compact[0]["sources"][0]["metadata"]
+    assert len(compact[0]["retrieved_chunks"][0]["text"]) == 350
