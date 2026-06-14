@@ -194,6 +194,9 @@ Request fields:
 The response includes `model_run.token_estimate` so each request can display estimated price next
 to the generated result.
 
+The mock UI renders the response as an execution workflow. Each step has expandable input and
+output previews so the analyst can inspect what was sent to the model and what came back.
+
 ## Start the Server
 
 ```powershell

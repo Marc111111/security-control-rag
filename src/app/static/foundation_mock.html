@@ -181,6 +181,69 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 12px;
       }
+      .workflow {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .workflow-step {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfa;
+        overflow: hidden;
+      }
+      .workflow-step > summary {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        cursor: pointer;
+        padding: 10px 12px;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .step-index {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        background: #dfece9;
+        color: #0b5f59;
+        font-size: 12px;
+      }
+      .step-content {
+        border-top: 1px solid var(--line);
+        padding: 10px 12px 12px;
+      }
+      .step-tabs {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .step-tab {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: white;
+      }
+      .step-tab summary {
+        cursor: pointer;
+        padding: 8px 10px;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+      }
+      .step-tab pre {
+        border-top: 1px solid var(--line);
+        padding: 10px;
+        max-height: 280px;
+        overflow: auto;
+      }
+      .empty {
+        color: var(--muted);
+        font-size: 14px;
+        padding: 14px;
+      }
       .field {
         padding: 12px;
         border-bottom: 1px solid var(--line);
@@ -228,6 +291,10 @@
       @media (max-width: 980px) {
         main {
           height: auto;
+          grid-template-columns: 1fr;
+        }
+        .grid,
+        .step-tabs {
           grid-template-columns: 1fr;
         }
         .input-panel {
@@ -287,6 +354,10 @@
         <div class="price" id="price"></div>
       </section>
       <section>
+        <div class="panel">
+          <div class="panel-header"><div class="panel-title">Execution Workflow</div></div>
+          <div class="panel-body"><div class="workflow" id="workflow"></div></div>
+        </div>
         <div class="grid">
           <div class="panel">
             <div class="panel-header"><div class="panel-title">Draft Report Fields</div></div>
@@ -314,6 +385,7 @@
       const findingsEl = document.querySelector("#findings");
       const postgresEl = document.querySelector("#postgres");
       const debugEl = document.querySelector("#debug");
+      const workflowEl = document.querySelector("#workflow");
       const modelSelect = document.querySelector("#modelSelect");
       const allowExternal = document.querySelector("#allowExternal");
       const apiKeyEl = document.querySelector("#apiKey");
@@ -393,6 +465,130 @@
           null,
           2,
         );
+        renderWorkflow(data);
+      }
+
+      function renderEmpty() {
+        draftEl.innerHTML = `<div class="empty">No generated draft yet.</div>`;
+        findingsEl.innerHTML = `<div class="empty">No findings yet.</div>`;
+        postgresEl.textContent = "";
+        debugEl.textContent = "";
+        priceEl.innerHTML = "";
+        workflowEl.innerHTML = `<div class="empty">No run yet. Choose a model and run the workflow to see each step.</div>`;
+        statusEl.textContent = "Ready. No workflow has run yet.";
+      }
+
+      function renderWorkflow(data) {
+        const selected = data.model_run || {
+          provider: "mock",
+          model: "simulated foundation model",
+          token_estimate: null,
+        };
+        const debug = data.debug || {};
+        const packet = safeJsonParse(packetEl.value);
+        const steps = [
+          {
+            title: "Read assessment rows from PostgreSQL",
+            input: {
+              query:
+                "SELECT vendor, tier_attributes, questionnaire_results, controls, comments, evidence_descriptions\n" +
+                "FROM tprm_assessment_view\n" +
+                `WHERE assessment_id = '${escapeSql(packet?.assessment_id || "A-100")}';`,
+            },
+            output: packet,
+          },
+          {
+            title: "Build canonical assessment packet",
+            input: "Application joins vendor, tier, control, response, comment, and evidence rows.",
+            output: packet,
+          },
+          {
+            title: "Sanitize human-generated text",
+            input: {
+              vendor_comments: (packet?.questionnaire_results || []).map((item) => ({
+                question_id: item.question_id,
+                vendor_comment: item.vendor_comment,
+                analyst_comment: item.analyst_comment,
+              })),
+            },
+            output: debug.sanitized_packet || "Available when debug=true on the workflow response.",
+          },
+          {
+            title: "Classify findings",
+            input: "Full compliance becomes strength. Partial/no compliance becomes weakness.",
+            output: data.findings || {},
+          },
+          {
+            title: "Estimate token usage and request price",
+            input: {
+              provider: selected.provider,
+              model: selected.model,
+              estimated_output_tokens: selected.token_estimate?.estimated_output_tokens || 900,
+            },
+            output: selected.token_estimate || "No estimate returned for this run.",
+          },
+          {
+            title: "Call foundation model: prompt input and raw output",
+            input: {
+              provider: selected.provider,
+              model: selected.model,
+              messages_sent_to_model: debug.prompt_messages || "Prompt messages not returned.",
+              api_key: selected.provider === "openai" ? "[request scoped key hidden]" : "[not used]",
+            },
+            output: {
+              raw_model_response: debug.raw_model_response || "Raw model output not returned.",
+            },
+          },
+          {
+            title: "Parse model output into report fields",
+            input: debug.raw_model_response || "Raw model output not returned.",
+            output: data.draft || {},
+          },
+          {
+            title: "Prepare PostgreSQL draft write payload",
+            input:
+              "INSERT or UPDATE draft assessment section fields. snapshot_ready remains false until analyst approval.",
+            output: data.postgres_payload || {},
+          },
+        ];
+        workflowEl.innerHTML = steps.map((step, index) => workflowStep(step, index)).join("");
+      }
+
+      function workflowStep(step, index) {
+        const open = index < 2 ? " open" : "";
+        return `<details class="workflow-step"${open}>
+          <summary><span class="step-index">${index + 1}</span>${escapeHtml(step.title)}</summary>
+          <div class="step-content">
+            <div class="step-tabs">
+              ${stepTab("Input", step.input, index === 0)}
+              ${stepTab("Output / Result", step.output, index === 0)}
+            </div>
+          </div>
+        </details>`;
+      }
+
+      function stepTab(label, value, open) {
+        return `<details class="step-tab"${open ? " open" : ""}>
+          <summary>${escapeHtml(label)}</summary>
+          <pre>${escapeHtml(formatValue(value))}</pre>
+        </details>`;
+      }
+
+      function formatValue(value) {
+        if (typeof value === "string") return value;
+        return JSON.stringify(value, null, 2);
+      }
+
+      function safeJsonParse(value) {
+        try {
+          return JSON.parse(value);
+        } catch {
+          return null;
+        }
+      }
+
+      function escapeSql(value) {
+        return String(value).replaceAll("'", "''");
       }
 
       function renderPrice(modelRun) {
@@ -430,12 +626,16 @@
 
       document.querySelector("#reset").addEventListener("click", () => {
         packetEl.value = JSON.stringify(samplePacket, null, 2);
+        renderEmpty();
       });
 
       document.querySelector("#runMock").addEventListener("click", async () => {
         try {
           setBusy(true, "Running simulated workflow...");
-          const data = await postJson("/api/mock/foundation-summary", packetPayload());
+          const data = await postJson("/api/assessments/foundation-summary/model-run", {
+            ...modelPayload(),
+            provider: "mock",
+          });
           renderResponse(data);
           statusEl.textContent = "Simulation complete. No external model or database was used.";
         } catch (error) {
@@ -483,7 +683,7 @@
         document.querySelector("#estimate").click();
       });
 
-      loadSample().then(() => document.querySelector("#runMock").click());
+      loadSample().then(renderEmpty);
     </script>
   </body>
 </html>

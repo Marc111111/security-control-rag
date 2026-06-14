@@ -193,6 +193,10 @@ The mock screen can accept an OpenAI API key for a single request. The key is no
 application and is not returned in debug output; use `.env` for a longer-lived local development
 configuration.
 
+The mock screen starts clean. After a run, it renders a vertical execution workflow with expandable
+steps for the simulated PostgreSQL read, canonical packet, sanitization, finding classification,
+token estimate, model call, parsed draft, and PostgreSQL draft-write payload.
+
 ## Original Local RAG Prototype
 
 The first target stack is:

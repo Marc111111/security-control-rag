@@ -197,3 +197,8 @@ price. OpenAI runs must remain blocked unless `confirm_external_call=true`.
 The mock screen also accepts a request-scoped OpenAI API key. Never persist that key, include it in
 debug payloads, or return it in API responses. `.env` remains the option for longer-lived local
 development keys.
+
+The mock screen should start clean and only render output after a run. It displays a vertical
+execution workflow with expandable input/output previews for simulated PostgreSQL read, packet
+assembly, sanitization, finding classification, token estimate, model call, parsing, and simulated
+PostgreSQL write payload.
