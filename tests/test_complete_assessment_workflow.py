@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
 from fastapi.testclient import TestClient
 
 import app.workflows.complete_assessment as complete_assessment
+import app.workflows.job_manager as job_manager
 from app.assessment.mock_data import sample_foundation_packet
 from app.config import Settings
 from app.graph.store import MemoryGraphStore
@@ -54,6 +56,12 @@ class WorkflowFakeChatModel:
           "general_model_reasoning": ""
         }
         """
+
+
+class SlowWorkflowFakeChatModel(WorkflowFakeChatModel):
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        time.sleep(0.25)
+        return super().chat(messages)
 
 
 def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
@@ -152,6 +160,99 @@ def test_complete_assessment_rejects_openai_without_confirmation(
     assert "confirm_external_call" in response.json()["detail"]
 
 
+def test_complete_assessment_preflight_endpoint_estimates_before_model_calls(
+    tmp_path: Path,
+) -> None:
+    pipeline = _memory_pipeline(tmp_path, WorkflowFakeChatModel())
+    client = TestClient(create_app(pipeline))
+
+    response = client.post(
+        "/api/workflows/complete-assessment/preflight",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {"provider": "ollama", "model": "qwen3:14b"},
+            "top_k": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["weakness_count"] == 2
+    assert body["llm_call_count"] == 3
+    assert body["note"].startswith("Preflight does not query")
+
+
+def test_complete_assessment_job_endpoint_runs_to_completion(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        complete_assessment,
+        "_chat_model",
+        lambda *args, **kwargs: WorkflowFakeChatModel(),
+    )
+    pipeline = _memory_pipeline(tmp_path, WorkflowFakeChatModel())
+    pipeline.ingest(_standards_fixture(tmp_path), chunk_size=300)
+    client = TestClient(create_app(pipeline))
+
+    start = client.post(
+        "/api/workflows/complete-assessment/jobs",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {"provider": "ollama", "model": "qwen3:14b"},
+            "top_k": 5,
+        },
+    )
+
+    assert start.status_code == 200
+    job_id = start.json()["job_id"]
+    final = _wait_for_job(client, job_id)
+    assert final["status"] == "completed"
+    assert final["result"]["steps"][0]["name"] == "Input source adapter"
+
+
+def test_complete_assessment_job_cancel_requests_ollama_stop(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    stopped: list[str] = []
+    monkeypatch.setattr(
+        complete_assessment,
+        "_chat_model",
+        lambda *args, **kwargs: SlowWorkflowFakeChatModel(),
+    )
+    monkeypatch.setattr(job_manager, "_stop_ollama_model", stopped.append)
+    pipeline = _memory_pipeline(tmp_path, SlowWorkflowFakeChatModel())
+    pipeline.ingest(_standards_fixture(tmp_path), chunk_size=300)
+    client = TestClient(create_app(pipeline))
+    start = client.post(
+        "/api/workflows/complete-assessment/jobs",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {"provider": "ollama", "model": "qwen3:14b"},
+            "top_k": 5,
+        },
+    )
+    job_id = start.json()["job_id"]
+
+    cancel = client.post(f"/api/workflows/complete-assessment/jobs/{job_id}/cancel")
+
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] in {"cancelling", "cancelled"}
+    assert stopped == ["qwen3:14b"]
+    final = _wait_for_job(client, job_id)
+    assert final["status"] == "cancelled"
+
+
 def test_compact_rag_evidence_removes_large_debug_payloads() -> None:
     compact = complete_assessment._compact_rag_evidence(
         [
@@ -199,3 +300,41 @@ def test_compact_rag_evidence_removes_large_debug_payloads() -> None:
     assert "source_citations" not in compact[0]["answer"]
     assert "unused" not in compact[0]["sources"][0]["metadata"]
     assert len(compact[0]["retrieved_chunks"][0]["text"]) == 350
+
+
+def _memory_pipeline(tmp_path: Path, chat_model: object) -> GraphRagPipeline:
+    settings = Settings(
+        vector_backend="memory",
+        graph_backend="memory",
+        debug=True,
+        keyword_index_path=str(tmp_path / "keyword" / "chunks.jsonl"),
+        run_store_path=str(tmp_path / "runs"),
+    )
+    return GraphRagPipeline(
+        settings,
+        embedding_client=HashEmbeddingClient(dimensions=32),
+        dense_store=MemoryDenseStore(),
+        graph_store=MemoryGraphStore(),
+        chat_model=chat_model,
+    )
+
+
+def _standards_fixture(tmp_path: Path) -> Path:
+    source = tmp_path / "test-standards.md"
+    source.write_text(
+        "CIS 10.1 requires deploying and maintaining anti-malware protection. "
+        "NIST CSF recovery planning supports ransomware recovery and restoration.",
+        encoding="utf-8",
+    )
+    return source
+
+
+def _wait_for_job(client: TestClient, job_id: str) -> dict[str, Any]:
+    for _ in range(50):
+        response = client.get(f"/api/workflows/complete-assessment/jobs/{job_id}")
+        assert response.status_code == 200
+        body = response.json()
+        if body["status"] in {"completed", "failed", "cancelled"}:
+            return body
+        time.sleep(0.05)
+    raise AssertionError("job did not finish")

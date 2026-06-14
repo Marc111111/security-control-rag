@@ -93,6 +93,14 @@ grc-graphrag-api
 - `POST /api/workflows/complete-assessment/run` is the current SaaS workflow entrypoint. It accepts
   `input_source` plus model settings and returns persisted workflow steps plus a deterministic
   result contract.
+- The browser must use the async job endpoints, not the synchronous `run` endpoint:
+  `preflight -> jobs -> poll jobs/{job_id} -> optional cancel`. This prevents long local
+  `qwen3:14b` calls from freezing the UI and gives the user a Cancel Run button.
+- Cancelling an Ollama-backed job calls `ollama stop <model>` to release GPU/VRAM. Always verify
+  with `ollama ps` or `nvidia-smi` if a user reports GPU still being used. Running jobs pass through
+  `cancelling` until any in-flight model call exits, then the worker calls `ollama stop <model>`
+  again before reporting `cancelled`. Workflow-scoped Ollama calls stream responses and use
+  `keep_alive=0s` to reduce cancellation latency and avoid the default keepalive residency.
 - `POST /api/query` remains the lower-level GraphRAG natural-language query endpoint.
 - The complete workflow must show each step's input, process, and output in the UI.
 - Add tests with every new behavior.

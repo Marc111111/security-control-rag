@@ -168,10 +168,13 @@ but then runs the real workflow stack. The first source shape is replaceable thr
 `input_source.adapter`, so production PostgreSQL can later supply a different row/view model
 without rewriting the chain.
 
-Main endpoint:
+Browser-safe async endpoints:
 
 ```http
-POST /api/workflows/complete-assessment/run
+POST /api/workflows/complete-assessment/preflight
+POST /api/workflows/complete-assessment/jobs
+GET /api/workflows/complete-assessment/jobs/{job_id}
+POST /api/workflows/complete-assessment/jobs/{job_id}/cancel
 ```
 
 Example request shape:
@@ -189,15 +192,21 @@ Example request shape:
   },
   "model": {
     "provider": "ollama",
-    "model": "qwen3:14b"
+    "model": "qwen3:14b",
+    "max_estimated_input_tokens": 24000
   },
-  "top_k": 10,
+  "top_k": 8,
   "debug": true
 }
 ```
 
-The response includes `steps` for the visual workflow, `cost_estimate`, `final_result`, and
-`run_path`. Saved runs can be compared through `GET /api/workflows/complete-assessment/runs`.
+The UI uses preflight, starts a background job, polls job status, and can cancel a local Ollama
+run. Cancelling moves a running job through `cancelling` while any in-flight model call unwinds,
+then calls `ollama stop <model>` again before the job becomes `cancelled`. Job-scoped Ollama calls
+stream responses and use `keep_alive=0s` to avoid holding the generator after a workflow call. The
+completed job response includes `steps` for the visual workflow, `cost_estimate`, `final_result`,
+and `run_path`. Saved runs can be compared through
+`GET /api/workflows/complete-assessment/runs`.
 
 For a no-database packet sample, the screen calls:
 

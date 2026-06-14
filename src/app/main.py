@@ -17,6 +17,7 @@ from app.config import Settings, load_settings
 from app.generation.clients import OpenAIChatClient
 from app.pipeline import GraphRagPipeline
 from app.workflows.complete_assessment import CompleteAssessmentRequest, CompleteAssessmentWorkflow
+from app.workflows.job_manager import WorkflowJobManager
 from app.workflows.run_store import WorkflowRunStore
 from secure_rag.llm import OllamaChatClient
 
@@ -115,6 +116,14 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
             runtime_service = GraphRagPipeline(load_settings())
         return runtime_service
 
+    def make_job_pipeline() -> GraphRagPipeline:
+        current = get_service()
+        if isinstance(current, GraphRagPipeline):
+            return current
+        return GraphRagPipeline(load_settings())
+
+    job_manager = WorkflowJobManager(pipeline_factory=make_job_pipeline)
+
     @app.get("/mock/foundation", response_class=HTMLResponse, include_in_schema=False)
     def foundation_mock_ui() -> str:
         return _static_file("foundation_mock.html")
@@ -148,6 +157,34 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
             return workflow.run(request)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/workflows/complete-assessment/preflight")
+    def complete_assessment_preflight(request: CompleteAssessmentRequest) -> dict[str, Any]:
+        try:
+            return job_manager.preflight(request)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/workflows/complete-assessment/jobs")
+    def complete_assessment_job_start(request: CompleteAssessmentRequest) -> dict[str, Any]:
+        try:
+            return job_manager.start(request)
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/workflows/complete-assessment/jobs/{job_id}")
+    def complete_assessment_job_status(job_id: str) -> dict[str, Any]:
+        try:
+            return job_manager.get(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
+
+    @app.post("/api/workflows/complete-assessment/jobs/{job_id}/cancel")
+    def complete_assessment_job_cancel(job_id: str) -> dict[str, Any]:
+        try:
+            return job_manager.cancel(job_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="job not found") from exc
 
     @app.get("/api/workflows/complete-assessment/runs")
     def complete_assessment_runs(

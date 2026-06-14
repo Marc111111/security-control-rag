@@ -249,6 +249,7 @@
         </div>
         <div class="actions">
           <button id="run">Run Complete Workflow</button>
+          <button class="secondary" id="cancel" disabled>Cancel Run</button>
           <button class="secondary" id="refreshRuns">Refresh Saved Runs</button>
         </div>
         <div class="status" id="status">Ready. No workflow has run yet.</div>
@@ -285,6 +286,9 @@
       const metricsEl = document.querySelector("#metrics");
       const statusEl = document.querySelector("#status");
       let sample = null;
+      let currentJobId = null;
+      let pollTimer = null;
+      let lastPreflight = null;
 
       function configureModels() {
         modelEl.innerHTML = models[providerEl.value].map((model) => `<option value="${model}">${model}</option>`).join("");
@@ -336,14 +340,78 @@
 
       async function runWorkflow() {
         try {
-          setBusy(true, "Running complete GraphRAG workflow...");
-          const data = await postJson("/api/workflows/complete-assessment/run", requestBody());
-          renderRun(data);
-          await refreshRuns();
-          statusEl.textContent = `Completed ${data.run_id}`;
+          setBusy(true, "Checking workflow size before model calls...");
+          const body = requestBody();
+          const preflight = await postJson("/api/workflows/complete-assessment/preflight", body);
+          renderPreflight(preflight);
+          if (preflight.will_exceed_guard) {
+            throw new Error(`Preflight blocked: estimated input tokens ${preflight.estimated_input_tokens} exceed guard ${preflight.max_estimated_input_tokens}`);
+          }
+          statusEl.textContent = "Starting background workflow job...";
+          const job = await postJson("/api/workflows/complete-assessment/jobs", body);
+          currentJobId = job.job_id;
+          setBusy(true);
+          renderJob(job);
+          startPolling();
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
-        } finally {
+          currentJobId = null;
+          stopPolling();
+          setBusy(false);
+        }
+      }
+
+      async function cancelWorkflow() {
+        if (!currentJobId) return;
+        try {
+          statusEl.textContent = `Cancelling ${currentJobId} and asking Ollama to unload the model...`;
+          const job = await postJson(`/api/workflows/complete-assessment/jobs/${currentJobId}/cancel`, {});
+          renderJob(job);
+          if (job.status === "cancelling") {
+            setBusy(true);
+            startPolling();
+          } else {
+            stopPolling();
+            setBusy(false);
+          }
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          setBusy(false);
+        }
+      }
+
+      function startPolling() {
+        stopPolling();
+        pollTimer = window.setInterval(pollJob, 2000);
+        pollJob();
+      }
+
+      function stopPolling() {
+        if (pollTimer) window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+
+      async function pollJob() {
+        if (!currentJobId) return;
+        try {
+          const job = await getJson(`/api/workflows/complete-assessment/jobs/${currentJobId}`);
+          renderJob(job);
+          if (["completed", "failed", "cancelled"].includes(job.status)) {
+            stopPolling();
+            setBusy(false);
+            if (job.status === "completed" && job.result) {
+              renderRun(job.result);
+              await refreshRuns();
+              statusEl.textContent = `Completed ${job.result.run_id}`;
+            } else if (job.status === "cancelled") {
+              statusEl.textContent = `Cancelled ${job.job_id}`;
+            } else {
+              statusEl.innerHTML = `<span class="warning">${escapeHtml(job.error || "Workflow failed")}</span>`;
+            }
+          }
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          stopPolling();
           setBusy(false);
         }
       }
@@ -358,6 +426,59 @@
         workflowEl.innerHTML = data.steps.map((step, index) => renderStep(step, index)).join("");
         finalEl.textContent = JSON.stringify(data.final_result, null, 2);
       }
+
+      function renderPreflight(data) {
+        lastPreflight = data;
+        metricsEl.innerHTML = [
+          metric("Preflight", data.will_exceed_guard ? "Blocked" : "OK"),
+          metric("Input tokens", data.estimated_input_tokens),
+          metric("LLM calls", data.llm_call_count),
+          metric("Est. price", `$${data.estimated_cost_usd ?? 0}`),
+        ].join("");
+        workflowEl.innerHTML = renderPreflightStep(data);
+      }
+
+      function renderPreflightStep(data) {
+        return `<details class="step" open>
+          <summary>
+            <span class="num">0</span>
+            <span>
+              <span class="step-name">Preflight estimate</span>
+              <span class="step-explain">Checks expected workflow size before GPU/API model calls.</span>
+            </span>
+            <span class="tool">Python deterministic workflow</span>
+          </summary>
+          <div class="step-body">${preview("Output", data)}</div>
+        </details>`;
+      }
+
+      function renderJob(job) {
+        statusEl.textContent = `Job ${job.job_id}: ${job.status}`;
+        metricsEl.innerHTML = [
+          metric("Job", job.job_id),
+          metric("Status", job.status),
+          metric("Provider", job.provider),
+          metric("Model", job.model),
+        ].join("");
+        if (job.status !== "completed") {
+          workflowEl.innerHTML = `${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${renderJobStep(job)}`;
+        }
+      }
+
+      function renderJobStep(job) {
+        return `<details class="step" open>
+            <summary>
+              <span class="num">1</span>
+              <span>
+                <span class="step-name">Background workflow job</span>
+                <span class="step-explain">The browser polls this job instead of waiting on a long request.</span>
+              </span>
+              <span class="tool">${escapeHtml(job.status)}</span>
+            </summary>
+            <div class="step-body">${preview("Job", job)}</div>
+          </details>`;
+      }
+
 
       function renderStep(step, index) {
         return `<details class="step"${index === 0 ? " open" : ""}>
@@ -406,7 +527,12 @@
       }
 
       function setBusy(busy, text) {
-        document.querySelectorAll("button, select, input").forEach((item) => (item.disabled = busy));
+        document.querySelectorAll("button, select, input").forEach((item) => {
+          item.disabled = busy;
+        });
+        document.querySelector("#cancel").disabled = !busy || !currentJobId;
+        document.querySelector("#run").disabled = busy;
+        document.querySelector("#refreshRuns").disabled = busy;
         if (text) statusEl.textContent = text;
       }
 
@@ -416,6 +542,7 @@
 
       providerEl.addEventListener("change", configureModels);
       document.querySelector("#run").addEventListener("click", runWorkflow);
+      document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       document.querySelector("#reset").addEventListener("click", () => {
         packetEl.value = JSON.stringify(sample, null, 2);
         clearOutput();

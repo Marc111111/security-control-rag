@@ -1,6 +1,6 @@
 # Complete Assessment GraphRAG Goal Runbook
 
-Last updated: 2026-06-14 21:55 UTC.
+Last updated: 2026-06-15.
 
 ## Goal
 
@@ -13,7 +13,12 @@ tests, and a workflow UI/API.
 ## Current Architecture Direction
 
 - UI route: `GET /mock/foundation`.
-- Main workflow endpoint: `POST /api/workflows/complete-assessment/run`.
+- Browser workflow path:
+  - `POST /api/workflows/complete-assessment/preflight`
+  - `POST /api/workflows/complete-assessment/jobs`
+  - `GET /api/workflows/complete-assessment/jobs/{job_id}`
+  - `POST /api/workflows/complete-assessment/jobs/{job_id}/cancel`
+- Compatibility/debug workflow endpoint: `POST /api/workflows/complete-assessment/run`.
 - Saved run list: `GET /api/workflows/complete-assessment/runs`.
 - Saved run detail: `GET /api/workflows/complete-assessment/runs/{run_id}`.
 - Source input boundary: `input_source.adapter + input_source.payload`.
@@ -40,6 +45,12 @@ tests, and a workflow UI/API.
   can misread framework version numbers as control IDs.
 - Run output is saved under `data/workflow_runs`.
 - Request-scoped OpenAI API key is accepted but never persisted or returned.
+- Browser runs are async. The UI preflights token/cost estimates before model calls, starts a
+  background job, polls status, and can cancel running jobs.
+- Cancelling an Ollama job calls `ollama stop <model>` immediately, reports `cancelling` while any
+  in-flight call unwinds, then calls `ollama stop <model>` again before reporting `cancelled`.
+- Job-scoped Ollama calls stream responses and pass `keep_alive=0s`; this lets cancellation be
+  observed between chunks and avoids keeping the generator resident after successful calls.
 
 ## What Is Simulated
 
@@ -108,6 +119,8 @@ http://127.0.0.1:8000/mock/foundation
 - Input adapter layer: implemented.
 - Workflow-wide model routing: implemented.
 - New vertical workflow UI: implemented.
+- Async job polling and Cancel Run button: implemented.
+- Preflight token/cost estimate before model calls: implemented.
 - Run persistence: implemented.
 - Unit tests for complete workflow and parser normalization: implemented.
 - Third-party service folders under `third_party/`: configured in Docker Compose.
@@ -123,7 +136,11 @@ http://127.0.0.1:8000/mock/foundation
   - 2 risk evaluations
   - anti-malware gap produced CIS Safeguard 10.1-10.5 and SCF END-04 controls
   - DR/business-continuity gap produced SCF BCD recovery controls
-- Browser verification: pending in this goal run.
+- Browser verification in this goal run:
+  - `http://127.0.0.1:8000/mock/foundation` showed `Preflight estimate` plus
+    `Background workflow job`.
+  - Run -> Cancel moved the job to `cancelled` and re-enabled Run.
+  - `ollama ps` after cancellation showed no `qwen3:14b` resident; GPU utilization was 0%.
 - Commit/push/PR update: pending in this goal run.
 
 ## Known Risks And Improvements

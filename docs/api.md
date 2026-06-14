@@ -150,11 +150,21 @@ immutable snapshots itself; that remains an application persistence decision aft
 
 ## Complete Assessment GraphRAG Workflow
 
-`POST /api/workflows/complete-assessment/run`
+The browser UI uses the async job API so long local Ollama calls do not freeze the page.
 
-This is the current end-to-end prototype endpoint. It accepts a replaceable source input adapter,
-normalizes the source data, runs the real GraphRAG workflow, and returns persisted workflow steps
-plus a deterministic PostgreSQL-ready result contract.
+Primary async endpoints:
+
+- `POST /api/workflows/complete-assessment/preflight`
+- `POST /api/workflows/complete-assessment/jobs`
+- `GET /api/workflows/complete-assessment/jobs/{job_id}`
+- `POST /api/workflows/complete-assessment/jobs/{job_id}/cancel`
+
+The synchronous endpoint `POST /api/workflows/complete-assessment/run` remains available for
+debugging and compatibility, but the UI should not use it for local model runs.
+
+The workflow accepts a replaceable source input adapter, normalizes the source data, runs the real
+GraphRAG workflow, and returns persisted workflow steps plus a deterministic PostgreSQL-ready
+result contract.
 
 Request:
 
@@ -174,9 +184,9 @@ Request:
     "model": "qwen3:14b",
     "confirm_external_call": false,
     "estimated_output_tokens": 1200,
-    "max_estimated_input_tokens": 16000
+    "max_estimated_input_tokens": 24000
   },
-  "top_k": 10,
+  "top_k": 8,
   "debug": true
 }
 ```
@@ -198,6 +208,47 @@ Supported model selections:
 
 OpenAI requests require `confirm_external_call=true` and either a request-scoped
 `openai_api_key` or `OPENAI_API_KEY` in the environment.
+
+Preflight response:
+
+```json
+{
+  "adapter": "foundation_packet_v1",
+  "assessment_id": "A-100",
+  "vendor_id": "V-1",
+  "provider": "ollama",
+  "model": "qwen3:14b",
+  "weakness_count": 2,
+  "retrieval_query_count": 2,
+  "top_k": 8,
+  "llm_call_count": 3,
+  "estimated_input_tokens": 11214,
+  "estimated_output_tokens": 3600,
+  "estimated_cost_usd": 0.0,
+  "will_exceed_guard": false
+}
+```
+
+Start-job response:
+
+```json
+{
+  "job_id": "job-...",
+  "status": "queued",
+  "provider": "ollama",
+  "model": "qwen3:14b",
+  "preflight": {}
+}
+```
+
+Status values are `queued`, `running`, `cancelling`, `completed`, `failed`, and `cancelled`.
+A completed job returns `result` with the same shape as the synchronous workflow response.
+Cancelling an Ollama job sets the cancellation flag and calls `ollama stop <model>` immediately.
+If a worker is already inside a model call, the job remains `cancelling` until that call unwinds;
+job-scoped Ollama calls stream responses so the worker can observe cancellation between chunks.
+The worker then calls `ollama stop <model>` again before marking the job `cancelled`. Workflow
+Ollama calls use `keep_alive=0s` so a completed local run does not keep the generator resident
+for the default Ollama keepalive window.
 
 Response:
 

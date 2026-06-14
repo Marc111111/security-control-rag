@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -46,6 +47,10 @@ class CompleteAssessmentRequest(BaseModel):
     debug: bool = True
 
 
+class WorkflowCancelled(RuntimeError):
+    pass
+
+
 @dataclass(frozen=True)
 class WorkflowStep:
     name: str
@@ -76,7 +81,12 @@ class CompleteAssessmentWorkflow:
         self.pipeline = pipeline
         self.run_store = run_store
 
-    def run(self, request: CompleteAssessmentRequest) -> dict[str, Any]:
+    def run(
+        self,
+        request: CompleteAssessmentRequest,
+        *,
+        cancel_event: threading.Event | None = None,
+    ) -> dict[str, Any]:
         _validate_model_selection(request.model)
         packet, input_source = _resolve_input_source(request)
         created_at = datetime.now(UTC).isoformat()
@@ -86,11 +96,13 @@ class CompleteAssessmentWorkflow:
             request.model,
             self.pipeline.settings.ollama_base_url,
             self.pipeline.settings.openai_api_key,
+            cancel_event,
         )
         original_pipeline_chat_model = self.pipeline.chat_model
         self.pipeline.chat_model = selected_chat_model
 
         try:
+            _raise_if_cancelled(cancel_event)
             sql_query = _simulated_sql(packet.assessment_id)
             steps.append(
                 WorkflowStep(
@@ -112,6 +124,7 @@ class CompleteAssessmentWorkflow:
                 )
             )
 
+            _raise_if_cancelled(cancel_event)
             sanitized = sanitize_packet(packet)
             findings = classify_findings(sanitized)
             steps.append(
@@ -136,6 +149,7 @@ class CompleteAssessmentWorkflow:
             retrieval_input = _risk_queries(sanitized, findings)
             rag_answers: list[GraphRagAnswer] = []
             for item in retrieval_input:
+                _raise_if_cancelled(cancel_event)
                 answer = self.pipeline.query(
                     item["retrieval_question"],
                     top_k=request.top_k,
@@ -161,6 +175,7 @@ class CompleteAssessmentWorkflow:
                 )
             )
 
+            _raise_if_cancelled(cancel_event)
             cost_estimate = _estimate_complete_workflow_cost(
                 sanitized,
                 request.model,
@@ -179,7 +194,9 @@ class CompleteAssessmentWorkflow:
                     "Paragraph prompt exceeds max_estimated_input_tokens "
                     f"({paragraph_input_tokens} > {request.model.max_estimated_input_tokens})"
                 )
+            _raise_if_cancelled(cancel_event)
             raw_paragraphs = selected_chat_model.chat(paragraph_messages)
+            _raise_if_cancelled(cancel_event)
             paragraphs = _parse_paragraphs(raw_paragraphs, sanitized, findings)
             steps.append(
                 WorkflowStep(
@@ -197,6 +214,7 @@ class CompleteAssessmentWorkflow:
                 )
             )
 
+            _raise_if_cancelled(cancel_event)
             final_result = _final_result(
                 packet,
                 paragraphs,
@@ -232,6 +250,51 @@ class CompleteAssessmentWorkflow:
             self.pipeline.chat_model = original_pipeline_chat_model
 
 
+def estimate_complete_assessment_preflight(
+    request: CompleteAssessmentRequest,
+) -> dict[str, Any]:
+    _validate_model_selection(request.model)
+    packet, input_source = _resolve_input_source(request)
+    sanitized = sanitize_packet(packet)
+    findings = classify_findings(sanitized)
+    retrieval_input = _risk_queries(sanitized, findings)
+    packet_tokens = _rough_tokens(
+        json.dumps(sanitized.model_dump(mode="json"), ensure_ascii=True)
+    )
+    finding_tokens = _rough_tokens(json.dumps(_findings_dump(findings), ensure_ascii=True))
+    llm_call_count = max(1, len(retrieval_input)) + 1
+    estimated_retrieval_context_tokens = len(retrieval_input) * request.top_k * 180
+    estimated_input_tokens = packet_tokens + finding_tokens + estimated_retrieval_context_tokens
+    estimated_output_tokens = request.model.estimated_output_tokens * llm_call_count
+    price = MODEL_PRICES_PER_MILLION.get(request.model.model)
+    estimated_cost = 0.0
+    if request.model.provider == "openai" and price is not None:
+        input_cost = estimated_input_tokens * price["input"] / 1_000_000
+        output_cost = estimated_output_tokens * price["output"] / 1_000_000
+        estimated_cost = round(input_cost + output_cost, 6)
+    return {
+        "adapter": input_source.adapter,
+        "assessment_id": packet.assessment_id,
+        "vendor_id": packet.vendor.vendor_id,
+        "provider": request.model.provider,
+        "model": request.model.model,
+        "weakness_count": len(findings["weaknesses"]),
+        "retrieval_query_count": len(retrieval_input),
+        "top_k": request.top_k,
+        "llm_call_count": llm_call_count,
+        "estimated_input_tokens": estimated_input_tokens,
+        "estimated_output_tokens": estimated_output_tokens,
+        "estimated_total_tokens": estimated_input_tokens + estimated_output_tokens,
+        "max_estimated_input_tokens": request.model.max_estimated_input_tokens,
+        "estimated_cost_usd": estimated_cost,
+        "will_exceed_guard": estimated_input_tokens > request.model.max_estimated_input_tokens,
+        "note": (
+            "Preflight does not query Qdrant, BM25, Neo4j, Ollama, or OpenAI. "
+            "It estimates the workflow before GPU/API work starts."
+        ),
+    }
+
+
 def _validate_model_selection(model: ModelSelection) -> None:
     allowed_local = {"qwen3:14b", "gemma3:4b"}
     allowed_openai = {"gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4.1-mini"}
@@ -242,6 +305,11 @@ def _validate_model_selection(model: ModelSelection) -> None:
             raise ValueError(f"Unsupported OpenAI model: {model.model}")
         if not model.confirm_external_call:
             raise ValueError("OpenAI calls require confirm_external_call=true")
+
+
+def _raise_if_cancelled(cancel_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise WorkflowCancelled("Workflow job was cancelled")
 
 
 def _resolve_input_source(
@@ -273,6 +341,7 @@ def _chat_model(
     model: ModelSelection,
     ollama_base_url: str,
     configured_openai_api_key: str | None,
+    cancel_event: threading.Event | None = None,
 ) -> ChatModel:
     if model.provider == "openai":
         return OpenAIChatClient(
@@ -280,7 +349,12 @@ def _chat_model(
             model=model.model,
             max_output_tokens=model.estimated_output_tokens,
         )
-    return OllamaChatClient(model=model.model, base_url=ollama_base_url)
+    return OllamaChatClient(
+        model=model.model,
+        base_url=ollama_base_url,
+        keep_alive="0s",
+        cancel_event=cancel_event,
+    )
 
 
 def _risk_queries(
