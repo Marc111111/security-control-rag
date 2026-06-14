@@ -3,6 +3,82 @@
 The API gives the existing app a simple way to query the local RAG system without knowing about
 Ollama, embeddings, or Chroma internals.
 
+The advanced GraphRAG API lives in `app.main` and can be started with:
+
+```powershell
+grc-graphrag-api
+```
+
+It uses Qdrant for dense vectors, an in-process BM25 index for keyword retrieval, and Neo4j
+Community for graph relationships.
+
+## Advanced GraphRAG Query
+
+`POST /api/query`
+
+```json
+{
+  "question": "A medium company has no anti-malware solution in place. What threats, vulnerabilities, risks and controls should I document?",
+  "context": {
+    "company_size": "medium",
+    "known_gap": "no anti-malware solution"
+  },
+  "top_k": 12,
+  "debug": true
+}
+```
+
+Response shape:
+
+```json
+{
+  "answer": {
+    "executive_summary": "",
+    "assumptions": [],
+    "threats": [],
+    "vulnerabilities": [],
+    "risks": [],
+    "recommended_controls": [],
+    "risk_control_matrix": [],
+    "missing_information": [],
+    "source_citations": [],
+    "from_retrieved_evidence": "",
+    "general_model_reasoning": ""
+  },
+  "insufficient_evidence": false,
+  "sources": [],
+  "debug": {}
+}
+```
+
+Debug mode includes the generated sub-question plan, retrieved chunks with scores and source
+metadata, graph traversal rows, final prompt messages, and the raw model response. The service
+logs query debug data under `storage/evaluation`.
+
+## Advanced GraphRAG Ingestion
+
+`POST /api/ingest`
+
+```json
+{
+  "source": "standards",
+  "chunk_size": 1500,
+  "overlap": 200,
+  "batch_size": 64
+}
+```
+
+The ingestion path extracts text, chunks it, enriches metadata, stores vectors in Qdrant, indexes
+keywords for hybrid retrieval, and extracts candidate graph entities and relationships into Neo4j.
+
+## Advanced GraphRAG Evaluation
+
+`POST /api/retrieve` returns the retrieval plan, chunks, and graph traversal rows without asking
+the LLM to generate an answer.
+
+`POST /api/evaluation/feedback` records manual `relevant` / `not relevant` feedback for retrieved
+chunks.
+
 ## Start the Server
 
 ```powershell

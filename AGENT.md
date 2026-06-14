@@ -141,3 +141,20 @@ The next implementation slice should add an enforced answer schema shaped like:
 
 The API should return this structured object alongside the human-readable answer so the user's
 future app can query the RAG system reliably through natural language or structured JSON criteria.
+
+On 2026-06-14, the requested direction changed from a small single-shot RAG prototype toward an
+open-source advanced RAG / GraphRAG prototype for cybersecurity and GRC risk documentation. The
+new implementation lives under `src/app` and is intentionally modular:
+
+- `app/main.py` FastAPI entrypoint.
+- `app/config.py` environment-driven settings for Ollama/OpenAI, Qdrant, and Neo4j.
+- `app/ingestion/` document loading/chunk enrichment.
+- `app/retrieval/` Qdrant dense retrieval, BM25 keyword retrieval, merge/dedup/rerank.
+- `app/graph/` heuristic entity and relationship extraction plus memory/Neo4j stores.
+- `app/planning/` decomposition into exposure/gap, threats, vulnerabilities, risks, controls,
+  and framework references.
+- `app/generation/` structured answer prompt and Ollama/OpenAI chat clients.
+- `app/evaluation/` query logs and manual relevance feedback.
+
+The new API entrypoint is `grc-graphrag-api`. The old `security-rag-api` remains for compatibility.
+Qdrant and Neo4j are defined in `docker-compose.yml`; `.env.example` documents local settings.

@@ -6,6 +6,10 @@ Create a local RAG system that recommends information-security controls from a p
 The system must prefer source-grounded answers over general model knowledge and must provide
 provenance for generated recommendations.
 
+The second implementation slice adds an advanced cybersecurity/GRC GraphRAG prototype under
+`src/app`. It keeps the original local-first requirement but replaces single-shot retrieval with
+question planning, hybrid retrieval, graph extraction, and structured risk answers.
+
 ## Building Block 1: Knowledge Ingestion
 
 The ingestion pipeline loads documents from the private corpus, extracts text and metadata, and
@@ -97,3 +101,42 @@ criteria/query -> retriever -------------------------------------+
                                                                  |
 retrieved evidence -> grounded prompt -> Ollama/Gemma -> control answer
 ```
+
+## Advanced GraphRAG Data Flow
+
+```text
+documents
+  -> loaders and enriched chunks
+  -> dense embeddings -> Qdrant
+  -> BM25 keyword index
+  -> heuristic graph extraction -> Neo4j/Memgraph-compatible graph
+
+question
+  -> risk planner
+  -> sub-questions for gap, threats, vulnerabilities, risks, controls, frameworks
+  -> dense retrieval + keyword retrieval + graph traversal
+  -> merge, deduplicate, rerank
+  -> structured answer prompt
+  -> Ollama or OpenAI model
+  -> JSON risk answer with citations and debug evidence
+```
+
+Graph entity types:
+
+- Asset
+- Gap
+- Threat
+- Vulnerability
+- Risk
+- Control
+- Compliance requirement
+- Evidence source
+
+Core relationship types:
+
+- `THREAT_EXPLOITS_VULNERABILITY`
+- `VULNERABILITY_CREATES_RISK`
+- `CONTROL_MITIGATES_RISK`
+- `CONTROL_ADDRESSES_VULNERABILITY`
+- `GAP_INCREASES_LIKELIHOOD_OF_THREAT`
+- `REQUIREMENT_REQUIRES_CONTROL`

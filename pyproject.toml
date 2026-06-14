@@ -11,8 +11,12 @@ requires-python = ">=3.11"
 dependencies = [
   "chromadb>=0.5.0",
   "fastapi>=0.115.0",
+  "neo4j>=5.20.0",
+  "openai>=1.40.0",
   "pypdf>=4.0.0",
   "python-docx>=1.1.0",
+  "qdrant-client>=1.9.0",
+  "rank-bm25>=0.2.2",
   "pyyaml>=6.0.0",
   "openpyxl>=3.1.0",
   "uvicorn[standard]>=0.30.0",
@@ -28,6 +32,7 @@ dev = [
 [project.scripts]
 security-rag = "secure_rag.cli:main"
 security-rag-api = "secure_rag.api:main"
+grc-graphrag-api = "app.main:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

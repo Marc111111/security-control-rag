@@ -22,3 +22,4 @@ storage/
 # Local environment.
 .env
 .env.*
+!.env.example
