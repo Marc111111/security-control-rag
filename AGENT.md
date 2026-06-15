@@ -276,3 +276,12 @@ the top-left frame without hidden clipping, but do not make the estimate unreada
 estimate must be one readable line with exactly these business items: `Model`, `Expected in/out`
 (input and output token estimates), `Hard cap`, and `Total cost` in USD. Do not show mini cards, total-token
 clutter, LLM call count, EUR, or a redundant `Status OK` chip in that top-frame estimate.
+
+Quality gates are now a core design requirement, documented in `docs/quality-gates.md`. Future work
+must implement those gates before treating this workflow as reliable. Every LLM call needs a
+dedicated professional prompt-builder step, prompt contract validation, schema validation, content
+validation, citation/evidence validation, bounded repair retries, and visible failure when output
+does not satisfy expectations. Never silently replace failed LLM output with generic fallback text.
+Step 17 in the 2026-06-15 run demonstrated the failure mode: the final paragraph model call
+returned JSON-repair commentary and the parser hid it behind generic paragraphs. The final report
+writer must receive a clean validated fact packet, not raw debug dumps or malformed risk answers.

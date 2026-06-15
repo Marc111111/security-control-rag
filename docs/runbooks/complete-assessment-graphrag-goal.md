@@ -143,9 +143,18 @@ http://127.0.0.1:8000/mock/foundation
 - Separate retrieved evidence from general model reasoning.
 - If evidence is missing, say what is missing.
 - Keep the LLM out of persistence and schema decisions.
+- Every LLM call must have a dedicated professional prompt-builder step. Do not send a raw random
+  JSON blob and expect the model to infer its job.
+- Every LLM output must pass schema, content, relevance, and citation/evidence gates before it can
+  feed the next step.
+- No silent generic fallback may be shown as a successful result. Failed LLM output must be visible
+  as a failed quality gate with validation errors.
+- Final report paragraphs must be drafted from a deterministic validated fact packet, not raw
+  retrieval dumps or malformed prior model responses.
 - Keep simulated SQL source format isolated behind input adapters.
 - Every workflow step shown in the UI must include input, process, and output.
 - Large step outputs should be persisted and available for full preview.
+- The detailed gate design is in `docs/quality-gates.md`.
 
 ## Current Work Status
 
@@ -158,6 +167,8 @@ http://127.0.0.1:8000/mock/foundation
 - Workflow handoff steps and separate preview windows: implemented.
 - Run persistence: implemented.
 - Unit tests for complete workflow and parser normalization: implemented.
+- Quality-gate design documentation: completed in `docs/quality-gates.md`.
+- Runtime quality-gate implementation: not yet implemented.
 - Third-party service folders under `third_party/`: configured in Docker Compose.
 - Standards ingestion into Qdrant/BM25/Neo4j: completed.
 - Store counts after clean ingestion:
@@ -185,8 +196,33 @@ http://127.0.0.1:8000/mock/foundation
     chip in that top-frame estimate.
 - Commit/push/PR update: record compact Configuration panel changes in git and PR comments.
 
+## 2026-06-15 Step 17 Quality Finding
+
+The newest inspected run was:
+
+```text
+data/workflow_runs/run-2026-06-15T090956203951+0000-fff55270/run.json
+```
+
+Step 17, `Ask model to draft report paragraphs`, failed semantically. The raw `qwen3:14b` output
+started critiquing/repairing JSON instead of drafting the requested report paragraphs. The parser
+then produced generic fallback paragraphs such as `Risk exposure is driven by weak questionnaire
+responses and retrieved evidence.`
+
+This run must not be treated as a trustworthy final report. It demonstrates the required next
+implementation work:
+
+- add prompt-builder steps before every LLM call,
+- add output quality gates after every LLM call,
+- add bounded repair retries,
+- mark exhausted failures visibly instead of continuing,
+- build a deterministic validated fact packet before final paragraph generation,
+- remove or quarantine silent fallback behavior from final report generation.
+
 ## Known Risks And Improvements
 
+- LLM output validation is currently insufficient. `docs/quality-gates.md` is the required design
+  for the next implementation pass.
 - The graph extractor is heuristic. It is useful for a prototype but should later be replaced or
   supplemented by a stronger controlled extractor with confidence scoring.
 - BM25 persistence appends chunks. Re-ingestion should clear or version the keyword index to avoid

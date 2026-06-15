@@ -25,6 +25,12 @@ The new pipeline is multi-step rather than single-shot RAG:
 - merge/rerank evidence,
 - generate a structured risk answer with citations.
 
+LLM output is not considered reliable merely because it is valid JSON. The required runtime
+quality-gate design is documented in [`docs/quality-gates.md`](docs/quality-gates.md). Future
+implementation work must add prompt-builder steps, schema/content/evidence validation, bounded
+repair retries, and visible failed states for invalid model output before the workflow is treated
+as production-safe.
+
 Start Qdrant and Neo4j:
 
 ```powershell
@@ -161,7 +167,9 @@ Response fields include:
 
 The workflow sanitizes human-generated vendor and analyst comments before placing them in an LLM
 prompt. Full compliance becomes strengths; partial and no compliance become weaknesses. The LLM
-may draft the business wording, but deterministic code prepares the findings and fallback summary.
+may draft the business wording, but deterministic code prepares the findings. Silent generic
+fallbacks are not acceptable as successful final output; invalid LLM output must fail a visible
+quality gate as described in `docs/quality-gates.md`.
 
 For the current complete workflow demo, the screen starts from simulated PostgreSQL-shaped input
 but then runs the real workflow stack. The first source shape is replaceable through

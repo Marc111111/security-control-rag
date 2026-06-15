@@ -92,8 +92,10 @@ PostgreSQL assessment rows
   -> classify questionnaire results
   -> full compliance -> strengths
   -> partial/no compliance -> weaknesses
-  -> LLM drafts business-friendly sections
-  -> deterministic fallback if model output is invalid
+  -> retrieve and validate standards-backed risk evidence
+  -> deterministic validated fact packet
+  -> LLM drafts business-friendly sections from validated facts only
+  -> quality gates reject invalid model output
   -> PostgreSQL-ready draft payload
 ```
 
@@ -111,6 +113,23 @@ The mock screen at `/mock/foundation` demonstrates this flow without real Postgr
 - token estimate/debug output.
 
 OpenAI testing is guarded by token estimation and an explicit `confirm_external_call` flag.
+
+## LLM Quality Gates
+
+LLM calls are not allowed to silently become accepted workflow state. The required quality-gate
+design is documented in [quality-gates.md](quality-gates.md). In summary:
+
+- every LLM call must have a dedicated prompt-builder step,
+- prompts must explain role, task, trusted inputs, evidence boundaries, forbidden behavior, output
+  contract, citation rules, and failure behavior,
+- output must pass schema, content, relevance, and citation/evidence validation,
+- validation failures may trigger bounded repair retries,
+- exhausted retries must mark the step failed visibly,
+- final report paragraphs must be generated from a deterministic validated fact packet, not raw
+  retrieval dumps, debug payloads, or malformed prior model output.
+
+Silent generic fallbacks are not acceptable for cybersecurity/GRC risk reporting. They hide failed
+analysis and make the UI look successful when the workflow should stop for analyst review.
 
 ## Building Block 5: Governance and Delivery
 
