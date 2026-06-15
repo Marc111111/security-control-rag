@@ -138,7 +138,7 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         background: #fbfcfa;
-        overflow: hidden;
+        overflow: visible;
       }
       details.step > summary {
         display: grid;
@@ -161,7 +161,53 @@
         font-weight: 800;
       }
       .step-name { font-size: 14px; font-weight: 800; }
-      .step-explain { margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 500; }
+      .step-title-line {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+      .step-name { overflow-wrap: anywhere; }
+      .info-dot {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        border: 1px solid #b9c9c4;
+        background: #fff;
+        color: #0b5f59;
+        font-size: 12px;
+        font-weight: 900;
+        line-height: 1;
+        cursor: help;
+      }
+      .info-dot::after {
+        content: attr(data-tip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%);
+        width: min(360px, 70vw);
+        padding: 9px 10px;
+        border: 1px solid #b9c9c4;
+        border-radius: 6px;
+        background: #fff;
+        box-shadow: 0 8px 24px rgba(20, 34, 44, .16);
+        color: #26323e;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.35;
+        white-space: normal;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 20;
+      }
+      .info-dot:hover::after,
+      .info-dot:focus::after { opacity: 1; }
       .tool {
         padding: 3px 8px;
         border-radius: 999px;
@@ -439,15 +485,9 @@
       }
 
       function renderPreflightStep(data) {
+        const description = "This checks the likely size and cost of the workflow before any AI model is called.";
         return `<details class="step" open>
-          <summary>
-            <span class="num">0</span>
-            <span>
-              <span class="step-name">Preflight estimate</span>
-              <span class="step-explain">Checks expected workflow size before GPU/API model calls.</span>
-            </span>
-            <span class="tool">Python deterministic workflow</span>
-          </summary>
+          ${renderStepSummary("0", "Preflight estimate", description, "Python deterministic workflow")}
           <div class="step-body">${preview("Output", data)}</div>
         </details>`;
       }
@@ -466,30 +506,18 @@
       }
 
       function renderJobStep(job) {
+        const description = jobDescription(job.status);
         return `<details class="step" open>
-            <summary>
-              <span class="num">1</span>
-              <span>
-                <span class="step-name">Background workflow job</span>
-                <span class="step-explain">The browser polls this job instead of waiting on a long request.</span>
-              </span>
-              <span class="tool">${escapeHtml(job.status)}</span>
-            </summary>
+            ${renderStepSummary("1", "Background workflow job", description, job.status)}
             <div class="step-body">${preview("Job", job)}</div>
           </details>`;
       }
 
 
       function renderStep(step, index) {
+        const description = friendlyStepDescription(step.name, step.explanation);
         return `<details class="step"${index === 0 ? " open" : ""}>
-          <summary>
-            <span class="num">${index + 1}</span>
-            <span>
-              <span class="step-name">${escapeHtml(step.name)}</span>
-              <span class="step-explain">${escapeHtml(step.explanation)}</span>
-            </span>
-            <span class="tool">${escapeHtml(step.tool)}</span>
-          </summary>
+          ${renderStepSummary(index + 1, step.name, description, step.tool)}
           <div class="step-body">
             <div class="triptych">
               ${preview("Input", step.input)}
@@ -498,6 +526,40 @@
             </div>
           </div>
         </details>`;
+      }
+
+      function renderStepSummary(number, name, description, tool) {
+        return `<summary>
+          <span class="num">${escapeHtml(number)}</span>
+          <span class="step-title-line">
+            <span class="step-name">${escapeHtml(name)}</span>
+            <span class="info-dot" tabindex="0" title="${escapeHtml(description)}" aria-label="${escapeHtml(description)}" data-tip="${escapeHtml(description)}">i</span>
+          </span>
+          <span class="tool">${escapeHtml(tool)}</span>
+        </summary>`;
+      }
+
+      function jobDescription(status) {
+        const descriptions = {
+          queued: "The run is waiting for its turn. Nothing is being written yet.",
+          running: "The workflow is running in the background while this page checks for updates, so the browser stays usable.",
+          cancelling: "The workflow is stopping and the local model is being asked to unload from the GPU.",
+          cancelled: "The workflow was stopped before producing a final result.",
+          failed: "The workflow stopped because one of the steps returned an error.",
+          completed: "The workflow finished and produced a result for review."
+        };
+        return descriptions[status] || "This shows the current background run and its latest status.";
+      }
+
+      function friendlyStepDescription(name, fallback) {
+        const descriptions = {
+          "Input source adapter": "This step takes the vendor assessment data from the source system and turns it into the standard format used by the workflow.",
+          "Sanitize and classify assessment data": "This step cleans the vendor and analyst comments, then separates answers into strengths, weaknesses, and items that need clarification.",
+          "Retrieve standards evidence with GraphRAG": "This step searches the standards library and relationship graph to find evidence for the relevant threats, vulnerabilities, risks, and controls.",
+          "Draft business-facing paragraphs": "This step writes readable report text from the assessment data and retrieved evidence. It should not invent facts outside that material.",
+          "Prepare PostgreSQL draft result contract": "This step packages the reviewed output into the structured result that your application can later store."
+        };
+        return descriptions[name] || fallback || "This step processes part of the assessment and passes its result to the next step.";
       }
 
       function preview(title, value) {
