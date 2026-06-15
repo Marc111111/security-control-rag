@@ -1,5 +1,6 @@
 from fastapi.testclient import TestClient
 
+import app.main as app_main
 from app.main import create_app
 
 
@@ -30,6 +31,7 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "compact-config" in response.text
     assert 'onclick="estimateCost()"' in response.text
     assert "estimateCostQuietly" in response.text
+    assert "/api/models/available" in response.text
     assert "minmax(380px, .95fr)" in response.text
     assert "@media (max-width: 860px)" in response.text
     assert "Token guard +/- %" in response.text
@@ -76,6 +78,18 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Expand" in response.text
 
 
+def test_available_models_endpoint_returns_safe_fallbacks() -> None:
+    client = TestClient(create_app())
+
+    response = client.post("/api/models/available", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "qwen3:14b" in body["ollama"]
+    assert "gpt-5.4" in body["openai"]
+    assert "openai_discovery_note" in body
+
+
 def test_foundation_packet_editor_ui_is_served() -> None:
     client = TestClient(create_app())
 
@@ -88,7 +102,12 @@ def test_foundation_packet_editor_ui_is_served() -> None:
     assert "foundationMock.savedDbScenario" in response.text
 
 
-def test_local_openai_key_cache_lifecycle() -> None:
+def test_local_openai_key_cache_lifecycle(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        app_main,
+        "_local_openai_key_path",
+        lambda: tmp_path / "openai_api_key.txt",
+    )
     client = TestClient(create_app())
 
     try:

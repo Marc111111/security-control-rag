@@ -125,6 +125,11 @@ grc-graphrag-api
   /api/local/openai-key`. The cache file is `storage/local/openai_api_key.txt`, which is ignored by
   Git. Loading a saved key must never enable external calls automatically; the UI must start with
   `Allow OpenAI call` unchecked every time.
+- `/mock/foundation` loads model names from `POST /api/models/available`. The endpoint always
+  returns safe local/OpenAI fallback models and, when a local or request-scoped OpenAI key is
+  available, also asks OpenAI for current GPT text model IDs. Newly discovered OpenAI models must
+  never be priced as `$0`; unknown OpenAI pricing uses a conservative placeholder estimate until the
+  pricing table is updated.
 - Add tests with every new behavior.
 - GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 
@@ -304,7 +309,7 @@ quality gates in a modal with operator and system-owner remediation guidance.
 
 Final report drafting now has an additional safeguard: the model receives a compact report fact
 packet rather than the full internal validated object, the prompt contract must include an explicit
-120-word maximum per paragraph, and the output validator enforces that cap. If final report model
+90-word maximum per paragraph, and the output validator enforces that cap. If final report model
 repair attempts still fail, the workflow must visibly reject those model drafts. It may then render
 safe report paragraphs deterministically from the validated risk-chain model, but that renderer must
 pass the same final paragraph gate before the result can be packaged.
@@ -321,9 +326,11 @@ relationship labels and distracted the local model. Qdrant/BM25 text evidence is
 graph rows must be filtered to retrieved chunk IDs, malformed graph entity names must be dropped,
 and prompts must describe graph output as secondary filtered hints.
 
-LLM output must be bounded by purpose. Risk-analysis calls should produce compact JSON with short
-labels, limited lists, and no background prose. Final report calls may use prose, but only controlled
-2-4 sentence paragraphs with the most important finding first. OpenAI calls use
+LLM output must be bounded by purpose for every provider, not just OpenAI. Risk-analysis calls
+should produce compact JSON with short labels, limited lists, and no background prose. Storyline
+fields are capped at 55 words, and final report calls may use prose only as controlled 2-4 sentence
+paragraphs capped at 90 words with the most important finding first. Repair prompts must tell the
+model to keep all validated facts while rewriting shorter and more directly. OpenAI calls use
 `max_output_tokens`; Ollama calls use `num_predict`. Token gates protect model-call size/cost,
 payload hygiene gates protect step-to-step data cleanliness, and style gates protect usefulness.
 

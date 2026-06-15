@@ -218,7 +218,24 @@ assembly, or the UI renderer.
 Supported model selections:
 
 - Local: `provider=ollama`, `model=qwen3:14b` or `gemma3:4b`.
-- External: `provider=openai`, `model=gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5`, or `gpt-4.1-mini`.
+- External: `provider=openai` with a GPT-4.1/GPT-5 text model from
+  `POST /api/models/available`.
+
+The model selector endpoint always returns curated fallbacks and, when an OpenAI key is available,
+also merges in currently listed OpenAI GPT text models:
+
+```http
+POST /api/models/available
+```
+
+```json
+{
+  "openai_api_key": "optional request-scoped key"
+}
+```
+
+OpenAI discovery is filtered to general text models used by this RAG workflow. It excludes Codex,
+pro, realtime, audio, image, search, TTS, and transcription variants.
 
 OpenAI cost/token estimates do not require `confirm_external_call` or an API key because preflight
 does not call the external model. Actual OpenAI workflow runs require
@@ -264,7 +281,9 @@ same conservative estimate is used for actual/estimated comparison.
 
 For local Ollama models, API cost fields remain `0`; token counts are still shown. For external
 OpenAI models, `estimated_cost_usd` and `estimated_cost_eur` are calculated from the configured
-per-million-token price table. EUR uses the configured `usd_to_eur_rate`.
+per-million-token price table. EUR uses the configured `usd_to_eur_rate`. If OpenAI discovers a
+new compatible model before exact pricing is configured, the estimate uses a conservative
+placeholder of `$10/M input` and `$60/M output` tokens rather than showing `$0`.
 
 Start-job response:
 

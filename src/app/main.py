@@ -21,6 +21,9 @@ from app.workflows.job_manager import WorkflowJobManager
 from app.workflows.run_store import WorkflowRunStore
 from secure_rag.llm import OllamaChatClient
 
+LOCAL_MODEL_FALLBACKS = ["qwen3:14b", "gemma3:4b"]
+OPENAI_MODEL_FALLBACKS = ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4.1-mini"]
+
 
 class GraphRagService(Protocol):
     settings: Settings
@@ -103,6 +106,10 @@ class LocalOpenAIKeyRequest(BaseModel):
     api_key: str = Field(..., min_length=1)
 
 
+class ModelDiscoveryRequest(BaseModel):
+    openai_api_key: str | None = Field(default=None, exclude=True)
+
+
 def create_app(service: GraphRagService | None = None) -> FastAPI:
     app = FastAPI(
         title="Cybersecurity GRC GraphRAG API",
@@ -172,6 +179,23 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
         if path.exists():
             path.unlink()
         return {"has_key": False}
+
+    @app.post("/api/models/available")
+    def available_models(request: ModelDiscoveryRequest) -> dict[str, Any]:
+        settings = load_settings()
+        key = request.openai_api_key or _read_local_openai_key() or settings.openai_api_key
+        live_openai = _discover_openai_models(key)
+        openai_models = _ordered_unique([*OPENAI_MODEL_FALLBACKS, *live_openai])
+        return {
+            "ollama": LOCAL_MODEL_FALLBACKS,
+            "openai": openai_models,
+            "openai_live_discovery": bool(live_openai),
+            "openai_discovery_note": (
+                "OpenAI models were listed with the local key."
+                if live_openai
+                else "Using curated OpenAI fallback models; live listing needs a valid key."
+            ),
+        }
 
     @app.post("/api/workflows/complete-assessment/run")
     def complete_assessment_run(
@@ -432,6 +456,53 @@ def _read_local_openai_key() -> str | None:
         return None
     key = path.read_text(encoding="utf-8").strip()
     return key or None
+
+
+def _discover_openai_models(api_key: str | None) -> list[str]:
+    if not api_key:
+        return []
+    try:
+        from openai import OpenAI
+
+        models = OpenAI(api_key=api_key).models.list()
+    except Exception:
+        return []
+    ids = [
+        str(getattr(model, "id", "") or "")
+        for model in getattr(models, "data", [])
+    ]
+    return sorted(
+        model_id
+        for model_id in ids
+        if _is_supported_text_model_id(model_id)
+    )
+
+
+def _is_supported_text_model_id(model_id: str) -> bool:
+    if not (model_id.startswith("gpt-4.1") or model_id.startswith("gpt-5")):
+        return False
+    blocked_fragments = [
+        "audio",
+        "codex",
+        "image",
+        "pro",
+        "realtime",
+        "search",
+        "tts",
+        "transcribe",
+        "vision-preview",
+    ]
+    return not any(fragment in model_id for fragment in blocked_fragments)
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
 
 
 def _chat_model_for_comparison(

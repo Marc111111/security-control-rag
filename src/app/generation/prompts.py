@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.retrieval.graph_context import graph_context_prompt_text
 from app.schemas import QueryPlan, RetrievedEvidence
 
-MAX_EVIDENCE_CHARS = 520
+MAX_EVIDENCE_CHARS = 420
 
 SYSTEM_PROMPT = """Role:
 You are a cybersecurity and GRC risk analyst preparing source-grounded risk documentation.
@@ -31,7 +31,8 @@ Return only valid JSON with exactly the requested keys.
 Output discipline:
 Be concise and surgical. Use short noun phrases and compact bullet-like JSON values. Do not explain
 your method, do not add background education, and do not use adjectives unless they change the risk
-meaning."""
+meaning. If a complete answer would become long, keep all important facts but shorten the wording:
+prefer fewer words, sharper labels, and focused sentences over broad prose."""
 
 
 def build_structured_answer_prompt(
@@ -100,10 +101,14 @@ Rules:
 - Keep recommended_controls to maximum 5 items.
 - Keep risk_control_matrix to maximum 3 rows.
 - Prefer 1-2 matrix rows when they cover the issue.
-- Keep each matrix cell short: preferably under 18 words.
+- Keep each matrix cell short: maximum 16 words.
+- Keep executive_summary to maximum 45 words.
+- Keep each threat, vulnerability, and risk label to maximum 12 words.
+- Keep each recommended control to maximum 18 words.
 - Use crisp labels, not prose paragraphs, for threats, vulnerabilities, risks, gaps, and controls.
 - Threat, vulnerability, and risk labels must reuse meaningful words from the question or selected
   evidence. Do not add plausible security labels that are not present in the source text.
+- Do not use filler phrases such as "it is important to note", "in order to", or "this highlights".
 - Cite evidence as S1, S2, etc. only when the cited source is listed above.
 - Put standards/control IDs in recommended_controls when evidence contains them.
 - Every recommended control must be traceable to retrieved evidence.

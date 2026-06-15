@@ -30,7 +30,10 @@ tests, and a workflow UI/API.
 - Qdrant image: `qdrant/qdrant:v1.18.0`, aligned with `qdrant-client==1.18.0`.
 - Local generation model: `qwen3:14b` through Ollama.
 - Embeddings: `mxbai-embed-large` through Ollama.
-- Guarded external models: `gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5`, `gpt-4.1-mini`.
+- Guarded external model selector: `POST /api/models/available` returns curated fallback OpenAI
+  models and, when an OpenAI key is available, merges in currently listed GPT text model IDs from
+  OpenAI. Newly discovered OpenAI models use conservative placeholder pricing until exact pricing
+  is configured; they must never appear as `$0` external runs.
 
 ## What Is Real
 
@@ -172,8 +175,8 @@ http://127.0.0.1:8000/mock/foundation
   paragraph model calls. Gates validate prompt contracts, schema/content/evidence quality, and
   final report consistency; failed gates retry and then fail visibly.
 - Final report model prompting now uses a compact validated report fact packet instead of the full
-  internal validated object. The prompt and validator enforce controlled prose: 2-4 sentences and
-  at most 120 words per paragraph.
+  internal validated object. The prompt and validator enforce controlled prose for every selected
+  provider: 2-4 sentences and at most 90 words per paragraph.
 - If final report model repair attempts fail, the workflow visibly rejects those drafts and may
   render deterministic paragraphs from the validated risk-chain model. That deterministic output
   must pass the same final paragraph gate before final packaging.
@@ -200,7 +203,7 @@ http://127.0.0.1:8000/mock/foundation
   - final report model attempts were rejected for unsupported `critical` wording and missing named
     controls
   - deterministic renderer produced gated paragraphs that named CIS/SCF controls across both risk
-    chains and stayed under the 120-word cap
+    chains and stayed under the 90-word cap
 - Browser verification in this goal run:
   - `http://127.0.0.1:8000/mock/foundation` showed `Preflight estimate` plus
     `Background workflow job`.
@@ -335,9 +338,9 @@ Validated live run:
 - Preflight cap: 46,758 total tokens.
 - Manual spot-check: Q2 and Q3 risk answers were compact and source-grounded. The final report
   prompt included role, objective, trusted fact boundary, forbidden behavior, JSON output contract,
-  compact validated context, and 120-word paragraph limit. The model report attempts were rejected
+  compact validated context, and 90-word paragraph limit. The model report attempts were rejected
   for unsupported `critical` wording and missing named controls, then the deterministic renderer
-  produced clean gated paragraphs under the 120-word cap.
+  produced clean gated paragraphs under the 90-word cap.
 
 ## 2026-06-15 Risk-Chain And Final Report Hardening
 
@@ -363,7 +366,7 @@ Implemented chain fields:
 The final report prompt receives a compact report fact packet derived from that chain. It does not
 receive raw retrieved chunks, raw graph rows, debug data, or full model responses. The prompt gate
 requires role, objective, trusted fact boundary, forbidden behavior, output contract, `Do not repair
-JSON`, `120 words`, named control references, and distinction between missing controls and missing
+JSON`, `90 words`, named control references, and distinction between missing controls and missing
 evidence. The prompt quality gate rejects oversized final-report prompts before a model call.
 
 The final report output gate now also rejects unsupported urgency/severity wording such as

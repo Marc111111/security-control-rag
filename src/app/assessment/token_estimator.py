@@ -13,6 +13,7 @@ MODEL_PRICES_PER_MILLION = {
     "gpt-4.1": {"input": 2.00, "output": 8.00},
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
 }
+UNKNOWN_OPENAI_PRICE_PER_MILLION = {"input": 10.00, "output": 60.00}
 
 USD_TO_EUR_RATE = 0.92
 
@@ -58,7 +59,15 @@ def estimate_foundation_summary_tokens(
     prompt_text = "\n".join(message["content"] for message in prompt)
     input_tokens = estimate_tokens(prompt_text)
     price = MODEL_PRICES_PER_MILLION.get(model)
-    if price is None:
+    if price is None and model.startswith("gpt-"):
+        price = UNKNOWN_OPENAI_PRICE_PER_MILLION
+        pricing_note = (
+            "OpenAI model pricing is not configured. Using conservative placeholder pricing "
+            "of $10/M input and $60/M output tokens."
+        )
+        input_cost = input_tokens * price["input"] / 1_000_000
+        output_cost = estimated_output_tokens * price["output"] / 1_000_000
+    elif price is None:
         input_cost = 0.0
         output_cost = 0.0
         pricing_note = "No API token price configured; local or unknown model is estimated as $0."

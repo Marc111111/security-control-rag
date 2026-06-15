@@ -274,7 +274,7 @@ def test_final_paragraph_gate_blocks_over_word_cap() -> None:
     )
 
     assert gate.passed is False
-    assert any("maximum 120 words" in issue.message for issue in gate.issues)
+    assert any("maximum 90 words" in issue.message for issue in gate.issues)
 
 
 def test_final_paragraph_gate_requires_named_added_control_in_risk_or_conclusion() -> None:

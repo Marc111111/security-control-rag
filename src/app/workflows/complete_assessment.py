@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,10 +17,16 @@ from app.assessment.schemas import (
     AssessmentFinding,
     FoundationAssessmentPacket,
 )
-from app.assessment.token_estimator import MODEL_PRICES_PER_MILLION, USD_TO_EUR_RATE
+from app.assessment.token_estimator import (
+    MODEL_PRICES_PER_MILLION,
+    UNKNOWN_OPENAI_PRICE_PER_MILLION,
+    USD_TO_EUR_RATE,
+)
 from app.generation.clients import ChatModel, OpenAIChatClient
 from app.pipeline import GraphRagPipeline
 from app.quality_gates import (
+    FINAL_PARAGRAPH_MAX_WORDS,
+    STORYLINE_FIELD_MAX_WORDS,
     GateIssue,
     QualityGateFailure,
     failed_gate,
@@ -579,7 +586,7 @@ class CompleteAssessmentWorkflow:
                         "Forbidden behavior:",
                         "Output contract:",
                         "Do not add new threats",
-                        "75 words",
+                        f"{STORYLINE_FIELD_MAX_WORDS} words",
                         "validated risk chain",
                     ],
                     task_name="gap storyline",
@@ -909,7 +916,7 @@ class CompleteAssessmentWorkflow:
                     "Forbidden behavior:",
                     "Output contract:",
                     "Do not repair JSON",
-                    "120 words",
+                    f"{FINAL_PARAGRAPH_MAX_WORDS} words",
                     "Name the most important standards or control references",
                     "Distinguish control absence from missing evidence",
                 ],
@@ -1266,6 +1273,8 @@ def estimate_complete_assessment_preflight(
         * (1 + (request.model.token_budget_tolerance_percent / 100))
     )
     price = MODEL_PRICES_PER_MILLION.get(request.model.model)
+    if request.model.provider == "openai" and price is None:
+        price = UNKNOWN_OPENAI_PRICE_PER_MILLION
     cost_estimate = _token_cost_estimate(
         provider=request.model.provider,
         model=request.model.model,
@@ -1311,14 +1320,20 @@ def _validate_model_selection(
     require_external_confirmation: bool = True,
 ) -> None:
     allowed_local = {"qwen3:14b", "gemma3:4b"}
-    allowed_openai = {"gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4.1-mini"}
     if model.provider == "ollama" and model.model not in allowed_local:
         raise ValueError(f"Unsupported local model: {model.model}")
     if model.provider == "openai":
-        if model.model not in allowed_openai:
+        if not _is_supported_openai_chat_model(model.model):
             raise ValueError(f"Unsupported OpenAI model: {model.model}")
         if require_external_confirmation and not model.confirm_external_call:
             raise ValueError("OpenAI calls require confirm_external_call=true")
+
+
+def _is_supported_openai_chat_model(model_id: str) -> bool:
+    if not (model_id.startswith("gpt-4.1") or model_id.startswith("gpt-5")):
+        return False
+    blocked = ["audio", "codex", "image", "pro", "realtime", "search", "tts", "transcribe"]
+    return not any(fragment in model_id for fragment in blocked)
 
 
 def _raise_if_cancelled(cancel_event: threading.Event | None) -> None:
@@ -1455,9 +1470,12 @@ def _paragraph_prompt(
                 "Return only valid JSON with exactly these keys: management_summary, "
                 "introduction, objective, risk_exposure, conclusion.\n\n"
                 "Output discipline:\n"
-                "Use controlled prose. Each paragraph must be 2-4 sentences and at most "
-                "120 words. Put the most important finding first. Avoid filler, adjectives, "
-                "methodology explanations, and long background education."
+                "Use natural professional prose: factual, calm, specific, and concise. Each "
+                "paragraph must be 2-4 sentences and at most "
+                f"{FINAL_PARAGRAPH_MAX_WORDS} words. Put the most important finding first. "
+                "Avoid filler, adjectives, methodology explanations, and long background "
+                "education. If the answer feels too long, keep every important fact but "
+                "shorten sentences and remove repetition."
             ),
         },
         {
@@ -1467,7 +1485,9 @@ def _paragraph_prompt(
                 "Write only the five requested paragraph values. Each paragraph must be "
                 "business-readable, concise, and grounded in the validated facts. Use the "
                 "storyline_report, risk_assessment_chains, and toolchain_delta to show the "
-                "analysis added beyond the original SQL/questionnaire facts.\n\n"
+                "analysis added beyond the original SQL/questionnaire facts. Keep the wording "
+                "tight: no introductions to the task, no methodology commentary, and no "
+                "duplicated reasoning across paragraphs.\n\n"
                 "Required output JSON:\n"
                 "{\n"
                 '  "management_summary": "",\n'
@@ -1516,7 +1536,7 @@ def _token_cost_estimate(
     estimate_basis: str,
 ) -> dict[str, Any]:
     price = MODEL_PRICES_PER_MILLION.get(model)
-    if provider != "openai" or price is None:
+    if provider != "openai":
         return {
             "estimated_cost_usd": 0.0,
             "estimated_cost_eur": 0.0,
@@ -1526,6 +1546,18 @@ def _token_cost_estimate(
                 "Internal/local model run: token use is tracked, but API price is $0."
             ),
         }
+    if price is None:
+        price = {"input": 10.00, "output": 60.00}
+        pricing_note = (
+            "External OpenAI model was discovered but exact pricing is not configured. "
+            "Using a conservative placeholder estimate of $10/M input and $60/M output "
+            "tokens; update MODEL_PRICES_PER_MILLION before relying on this for budgeting."
+        )
+    else:
+        pricing_note = (
+            "External OpenAI estimate from configured per-million input/output token prices. "
+            "EUR uses the configured USD_TO_EUR_RATE."
+        )
     input_cost = input_tokens * price["input"] / 1_000_000
     output_cost = output_tokens * price["output"] / 1_000_000
     estimated_cost_usd = round(input_cost + output_cost, 6)
@@ -1534,10 +1566,7 @@ def _token_cost_estimate(
         "estimated_cost_eur": round(estimated_cost_usd * USD_TO_EUR_RATE, 6),
         "usd_to_eur_rate": USD_TO_EUR_RATE,
         "estimate_basis": estimate_basis,
-        "pricing_note": (
-            "External OpenAI estimate from configured per-million input/output token prices. "
-            "EUR uses the configured USD_TO_EUR_RATE."
-        ),
+        "pricing_note": pricing_note,
     }
 
 
@@ -1655,8 +1684,11 @@ def _storyline_prompt(chain_packet: dict[str, Any]) -> list[dict[str, str]]:
                 "residual_conclusion.\n\n"
                 "Output discipline:\n"
                 "Each value except question_id must be one or two concise sentences and at "
-                "most 75 words. Put the concrete fact first. Avoid filler, methodology "
-                "explanations, adjectives, and broad security education."
+                f"most {STORYLINE_FIELD_MAX_WORDS} words. Put the concrete fact first. "
+                "Use natural professional language: factual, calm, specific, and concise. "
+                "Avoid filler, methodology explanations, adjectives, and broad security "
+                "education. If the explanation feels too long, keep every important fact but "
+                "shorten sentences and remove repetition."
             ),
         },
         {
@@ -1665,7 +1697,8 @@ def _storyline_prompt(chain_packet: dict[str, Any]) -> list[dict[str, str]]:
                 "Task:\n"
                 "Write the business storyline for this single validated risk chain. The "
                 "storyline must help a business owner understand what the toolchain added "
-                "beyond the original questionnaire gap.\n\n"
+                "beyond the original questionnaire gap. Do not repeat the same reasoning in "
+                "multiple fields; each field should add one clear point.\n\n"
                 "Required output JSON:\n"
                 "{\n"
                 '  "question_id": "",\n'
@@ -1740,15 +1773,18 @@ def _deterministic_storyline(chain: dict[str, Any]) -> dict[str, Any]:
     resilience_text = _join_human(resilience) or str(
         residual.get("remaining_issue") or "resilience remains evidence-dependent"
     )
+    residual_issue = str(
+        residual.get("remaining_issue") or "evidence must confirm operating effectiveness"
+    ).rstrip(".")
     return {
         "question_id": question_id,
         "gap_story": (
-            f"The assessment gap is {gap_text}. The questionnaire shows the weak answer; "
-            f"the standards/RAG chain links it to {control_name or control_text}."
+            f"The assessment gap is {gap_text}. Standards/RAG links the weak answer to "
+            f"{control_name or control_text}."
         ),
         "business_meaning": (
-            f"For this vendor tier, the gap matters because it can leave {vulnerability_text} "
-            f"available to {threat_text}."
+            f"For this vendor tier, {vulnerability_text} can increase exposure to "
+            f"{threat_text}."
         ),
         "risk_logic": (
             f"The inherent risk is {risk_text}, with likelihood "
@@ -1756,17 +1792,16 @@ def _deterministic_storyline(chain: dict[str, Any]) -> dict[str, Any]:
             f"and impact {inherent.get('impact', 'unknown')} in the validated chain."
         ),
         "control_logic": (
-            f"The chain adds named controls: {control_text}. These controls are the concrete "
-            "measures to reduce likelihood, improve detection, support response, or restore "
-            "service."
+            f"The chain adds named controls: {control_text}. These measures reduce exposure, "
+            "improve detection or response, or support service restoration."
         ),
         "resilience_logic": (
-            f"Resilience is addressed through {resilience_text}. This keeps recovery and response "
-            "capability visible, not only prevention."
+            f"Resilience depends on {resilience_text}. This keeps recovery and response "
+            "capability visible alongside prevention."
         ),
         "residual_conclusion": (
             "Residual concern remains: "
-            f"{residual.get('remaining_issue', 'evidence must confirm operating effectiveness')}. "
+            f"{residual_issue}. "
             "Analyst review should confirm implementation and testing evidence."
         ),
     }
@@ -1924,7 +1959,7 @@ def _deterministic_paragraphs(validated_fact_packet: dict[str, Any]) -> dict[str
             f"{vendor_name} should address {gap_text} with named controls such as "
             f"{added_text}. Resilience remains evidence-dependent until response ownership, "
             "monitoring, and recovery testing are evidenced. Analyst review should confirm "
-            f"{missing_text} before this draft becomes an immutable snapshot."
+            f"{missing_text} before the report is finalized."
         ),
     }
 
@@ -1952,7 +1987,7 @@ def _report_fact_packet(validated_fact_packet: dict[str, Any]) -> dict[str, Any]
         "weaknesses": [
             {
                 "question_id": _dict(item).get("question_id"),
-                "summary": _dict(item).get("summary"),
+                "summary": _compact_text(_dict(item).get("summary"), 24),
                 "control": _dict(item).get("control"),
                 "compliance": _dict(item).get("compliance"),
                 "maturity": _dict(item).get("maturity"),
@@ -2006,6 +2041,8 @@ def _compact_risk_chain_for_report(chain: Any) -> dict[str, Any]:
 def _compact_risk_chain_for_final_prompt(chain: Any) -> dict[str, Any]:
     item = _dict(chain)
     linked_control = _dict(item.get("linked_control"))
+    inherent = _dict(item.get("inherent_risk"))
+    residual = _dict(item.get("residual_concern"))
     return {
         "question_id": item.get("question_id"),
         "linked_control": {
@@ -2013,17 +2050,31 @@ def _compact_risk_chain_for_final_prompt(chain: Any) -> dict[str, Any]:
             "control_id": linked_control.get("control_id"),
             "title": linked_control.get("title"),
         },
-        "confirmed_gaps": _first_values(item.get("confirmed_gaps") or [], 2),
-        "threat_scenarios": _first_values(item.get("threat_scenarios") or [], 2),
-        "vulnerabilities": _first_values(item.get("vulnerabilities") or [], 2),
-        "inherent_risk": item.get("inherent_risk"),
+        "confirmed_gaps": _first_compact_values(item.get("confirmed_gaps") or [], 2, 14),
+        "threat_scenarios": _first_compact_values(
+            item.get("threat_scenarios") or [], 2, 12
+        ),
+        "vulnerabilities": _first_compact_values(
+            item.get("vulnerabilities") or [], 2, 12
+        ),
+        "inherent_risk": {
+            "risk_statement": _compact_text(inherent.get("risk_statement"), 18),
+            "likelihood": inherent.get("likelihood"),
+            "impact": inherent.get("impact"),
+        },
         "key_controls": _requirement_names(
             item.get("standards_requirements_added") or [],
             3,
         ),
-        "resilience_effects": _first_values(item.get("resilience_effects") or [], 1),
-        "residual_concern": item.get("residual_concern"),
-        "missing_information": _first_values(item.get("missing_information") or [], 2),
+        "resilience_effects": _first_compact_values(
+            item.get("resilience_effects") or [], 1, 18
+        ),
+        "residual_concern": {
+            "remaining_issue": _compact_text(residual.get("remaining_issue"), 20)
+        },
+        "missing_information": _first_compact_values(
+            item.get("missing_information") or [], 2, 16
+        ),
     }
 
 
@@ -2035,26 +2086,50 @@ def _compact_storyline_report_for_prompt(value: Any) -> dict[str, Any]:
             {
                 "question_id": _dict(row).get("question_id"),
                 "linked_control": _dict(row).get("linked_control"),
-                "gap_to_risk_story": _dict(row).get("gap_to_risk_story"),
+                "gap_to_risk_story": _compact_storyline_for_prompt(
+                    _dict(row).get("gap_to_risk_story")
+                ),
             }
             for row in (report.get("per_gap") or [])[:5]
         ],
-        "overall_conclusion": report.get("overall_conclusion"),
+        "overall_conclusion": _compact_text(report.get("overall_conclusion"), 45),
+    }
+
+
+def _compact_storyline_for_prompt(value: Any) -> dict[str, Any]:
+    storyline = _dict(value)
+    return {
+        "question_id": storyline.get("question_id"),
+        "gap_story": _compact_text(storyline.get("gap_story"), 24),
+        "business_meaning": _compact_text(storyline.get("business_meaning"), 24),
+        "risk_logic": _compact_text(storyline.get("risk_logic"), 24),
+        "control_logic": _compact_text(storyline.get("control_logic"), 24),
+        "resilience_logic": _compact_text(storyline.get("resilience_logic"), 24),
+        "residual_conclusion": _compact_text(
+            storyline.get("residual_conclusion"), 24
+        ),
     }
 
 
 def _compact_toolchain_delta_for_report(value: Any) -> dict[str, Any]:
     delta = _dict(value)
     return {
-        "already_known_from_sql": _first_values(delta.get("already_known_from_sql") or [], 3),
-        "added_by_rag": _first_values(delta.get("added_by_rag") or [], 6),
-        "added_by_graphrag": _first_values(delta.get("added_by_graphrag") or [], 4),
-        "added_by_resilience_analysis": _first_values(
+        "already_known_from_sql": _first_compact_values(
+            delta.get("already_known_from_sql") or [], 3, 18
+        ),
+        "added_by_rag": _first_compact_values(delta.get("added_by_rag") or [], 6, 18),
+        "added_by_graphrag": _first_compact_values(
+            delta.get("added_by_graphrag") or [], 4, 18
+        ),
+        "added_by_resilience_analysis": _first_compact_values(
             delta.get("added_by_resilience_analysis") or [],
             3,
+            18,
         ),
-        "remaining_uncertainty": _first_values(delta.get("remaining_uncertainty") or [], 4),
-        "business_interpretation": delta.get("business_interpretation"),
+        "remaining_uncertainty": _first_compact_values(
+            delta.get("remaining_uncertainty") or [], 4, 18
+        ),
+        "business_interpretation": _compact_text(delta.get("business_interpretation"), 32),
     }
 
 
@@ -2109,6 +2184,17 @@ def _first_values(values: list[Any], limit: int) -> list[str]:
         if len(result) >= limit:
             break
     return result
+
+
+def _first_compact_values(values: list[Any], limit: int, max_words: int) -> list[str]:
+    return [_compact_text(value, max_words) for value in _first_values(values, limit)]
+
+
+def _compact_text(value: object, max_words: int) -> str:
+    words = re.findall(r"\S+", str(value or "").strip())
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]).rstrip(".,;:") + "..."
 
 
 def _controls_from_chains(

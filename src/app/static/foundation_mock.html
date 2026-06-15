@@ -789,7 +789,7 @@
       </div>
     </div>
     <script>
-      const models = {
+      let models = {
         ollama: ["qwen3:14b", "gemma3:4b"],
         openai: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4.1-mini"],
       };
@@ -831,8 +831,26 @@
       const previewStore = new Map();
 
       function configureModels() {
-        modelEl.innerHTML = models[providerEl.value].map((model) => `<option value="${model}">${model}</option>`).join("");
+        const current = modelEl.value;
+        const providerModels = models[providerEl.value] || [];
+        modelEl.innerHTML = providerModels.map((model) => `<option value="${model}">${model}</option>`).join("");
+        if (providerModels.includes(current)) modelEl.value = current;
         refreshEstimateOrMarkDirty();
+      }
+
+      async function loadAvailableModels() {
+        try {
+          const data = await postJson("/api/models/available", {
+            openai_api_key: keyEl.value.trim() || null,
+          });
+          models = {
+            ollama: data.ollama?.length ? data.ollama : models.ollama,
+            openai: data.openai?.length ? data.openai : models.openai,
+          };
+          configureModels();
+        } catch {
+          configureModels();
+        }
       }
 
       function refreshEstimateOrMarkDirty() {
@@ -1042,6 +1060,7 @@
         } catch (error) {
           apiKeyStatusEl.textContent = "Could not read saved key.";
         }
+        await loadAvailableModels();
       }
 
       async function saveLocalOpenAiKey() {
@@ -1054,6 +1073,7 @@
           await postJson("/api/local/openai-key", { api_key: apiKey });
           confirmEl.checked = false;
           apiKeyStatusEl.textContent = "Saved locally. External calls remain disabled.";
+          await loadAvailableModels();
         } catch (error) {
           apiKeyStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         }
@@ -1065,6 +1085,7 @@
           keyEl.value = "";
           confirmEl.checked = false;
           apiKeyStatusEl.textContent = "Saved key deleted.";
+          await loadAvailableModels();
         } catch (error) {
           apiKeyStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         }
@@ -2039,7 +2060,6 @@
         clearCostEstimate();
       });
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
-      configureModels();
       loadSample().then(async () => {
         await loadLocalOpenAiKey();
         await estimateCostQuietly();

@@ -9,6 +9,12 @@ from app.schemas import RetrievedEvidence, StructuredRiskAnswer
 
 GateSeverity = Literal["blocking", "warning"]
 
+RISK_LABEL_MAX_WORDS = 12
+CONTROL_LABEL_MAX_WORDS = 18
+MATRIX_CELL_MAX_WORDS = 16
+STORYLINE_FIELD_MAX_WORDS = 55
+FINAL_PARAGRAPH_MAX_WORDS = 90
+
 
 @dataclass(frozen=True)
 class GateIssue:
@@ -675,11 +681,14 @@ def validate_gap_storyline(
         value = str(storyline.get(field_name) or "").strip()
         if not value or _is_bad_text(value):
             issues.append(_storyline_issue(field_name, "Storyline field is missing or unusable."))
-        elif _word_count(value) > 75:
+        elif _word_count(value) > STORYLINE_FIELD_MAX_WORDS:
             issues.append(
                 _storyline_issue(
                     field_name,
-                    "Storyline field is too long for a reviewer to inspect quickly.",
+                    (
+                        "Storyline field is too long for a reviewer to inspect quickly "
+                        f"({_word_count(value)} words > {STORYLINE_FIELD_MAX_WORDS})."
+                    ),
                     system_fix=(
                         "Constrain the storyline prompt to one or two concise sentences per "
                         "field, with no methodology explanation."
@@ -844,6 +853,22 @@ def validate_risk_answer(
             )
         )
 
+    if _word_count(answer.executive_summary) > 45:
+        issues.append(
+            GateIssue(
+                field="executive_summary",
+                message=(
+                    "Executive summary is too long for the structured risk answer "
+                    f"({_word_count(answer.executive_summary)} words > 45)."
+                ),
+                operator_fix="Do not approve verbose structured risk summaries.",
+                system_fix=(
+                    "Repair the model answer into one compact sentence that preserves the "
+                    "validated gap, risk, and control direction."
+                ),
+            )
+        )
+
     for field_name in ["threats", "vulnerabilities", "risks", "recommended_controls"]:
         values = getattr(answer, field_name)
         if not values:
@@ -869,12 +894,18 @@ def validate_risk_answer(
                 support_text,
             ):
                 issues.append(_unsupported_label_issue(field_name, value))
-            if _word_count(value) > 28:
+            max_words = (
+                CONTROL_LABEL_MAX_WORDS
+                if field_name == "recommended_controls"
+                else RISK_LABEL_MAX_WORDS
+            )
+            if _word_count(value) > max_words:
                 issues.append(
                     GateIssue(
                         field=field_name,
                         message=(
-                            "Value is too verbose for a structured risk field. Use a short "
+                            "Value is too verbose for a structured risk field "
+                            f"({_word_count(value)} words > {max_words}). Use a short "
                             f"label or phrase: {str(value)[:120]}"
                         ),
                         operator_fix="Do not approve verbose structured fields.",
@@ -924,13 +955,14 @@ def validate_risk_answer(
                 support_text,
             ):
                 issues.append(_unsupported_label_issue(f"{prefix}.{field_name}", value))
-            elif _word_count(value) > 24:
+            elif _word_count(value) > MATRIX_CELL_MAX_WORDS:
                 issues.append(
                     GateIssue(
                         field=f"{prefix}.{field_name}",
                         message=(
-                            "Matrix value is too verbose. Use a short business phrase: "
-                            f"{str(value)[:120]}"
+                            "Matrix value is too verbose "
+                            f"({_word_count(value)} words > {MATRIX_CELL_MAX_WORDS}). "
+                            f"Use a short business phrase: {str(value)[:120]}"
                         ),
                         operator_fix="Do not approve rows that bury the finding in prose.",
                         system_fix=(
@@ -1172,13 +1204,13 @@ def validate_final_paragraphs(
             )
         elif _is_bad_text(value):
             issues.append(_bad_text_issue(key, value))
-        elif _word_count(value) > 120:
+        elif _word_count(value) > FINAL_PARAGRAPH_MAX_WORDS:
             issues.append(
                 GateIssue(
                     field=key,
                     message=(
                         "Report paragraph is too long for the business summary contract "
-                        "(maximum 120 words)."
+                        f"(maximum {FINAL_PARAGRAPH_MAX_WORDS} words)."
                     ),
                     operator_fix=(
                         "Do not approve this report section; it is too verbose for review."
@@ -1365,6 +1397,10 @@ def repair_prompt(
         "rules": [
             "Use the same trusted input and evidence as the original prompt.",
             "Do not add new facts, controls, citations, or assumptions.",
+            "Keep every important validated fact, but rewrite it shorter and more directly.",
+            "Remove filler, methodology explanation, duplicated reasoning, and broad background.",
+            "Use natural professional language: factual, calm, specific, and concise.",
+            "If a field failed for length, summarize it without changing its meaning.",
             "Return only the required JSON object.",
             "Do not explain JSON, critique the prompt, or include markdown.",
         ],

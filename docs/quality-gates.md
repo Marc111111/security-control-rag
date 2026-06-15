@@ -18,7 +18,7 @@ Implementation status as of 2026-06-15:
 - complete-assessment final-paragraph LLM calls use a deterministic validated fact packet,
   prompt validation, strict parsing, output gates, and bounded repair retries;
 - final-paragraph prompts are built from a compact report fact packet, not the full internal
-  validated object, and must include an explicit 120-word maximum per paragraph;
+  validated object, and must include an explicit 90-word maximum per paragraph;
 - final reports must name concrete standards/control references added by RAG when available, and
   must not hide them behind generic counts such as `7 controls`;
 - final reports must avoid urgency or severity terms such as `critical`, `immediate`,
@@ -275,7 +275,7 @@ Checks:
 - prompt includes only the compact validated report fact packet plus minimal vendor/tier context
 - output contract requires exactly: management summary, introduction, objective, risk exposure,
   and conclusion
-- style contract requires 2-4 sentences and at most 120 words per paragraph
+- style contract requires 2-4 sentences and at most 90 words per paragraph
 - prompt requires risk exposure or conclusion to name the most important standards/control
   references from the risk chains or toolchain delta
 - prompt requires evidence-calibrated wording: distinguish a missing control from missing evidence,
@@ -295,7 +295,7 @@ Schema checks:
 
 Content checks:
 
-- paragraphs stay within the configured 120-word length limit
+- paragraphs stay within the configured 90-word length limit
 - mentions the actual vendor
 - mentions the tier level where relevant
 - mentions the real weaknesses
@@ -330,20 +330,35 @@ Risk-analysis calls should be surgical:
 
 - compact JSON only
 - short labels and phrases
+- executive summaries capped at 45 words
+- threat/vulnerability/risk labels capped at 12 words
+- control labels capped at 18 words
+- matrix cells capped at 16 words
 - maximum-value facts first
 - no explanation of the method
 - no background education
 - no adjective-heavy prose
 
+Storyline calls should explain one validated chain only:
+
+- one or two concise sentences per field
+- maximum 55 words per storyline field
+- no duplicated reasoning across fields
+- no new facts outside the selected risk chain
+
 Final report calls may use prose, but only controlled prose:
 
 - 2-4 sentences per paragraph
-- maximum 120 words per paragraph
+- maximum 90 words per paragraph
 - most important finding first
 - name concrete added controls where available
 - use evidence-calibrated language
 - no filler
 - no methodology narration
+
+Repair prompts must not ask the model to invent or expand. They must ask the model to preserve all
+important validated facts while rewriting the failed field shorter, more directly, and without
+repetition.
 
 Token gates prevent cost/runaway model-call size. Payload hygiene gates prevent oversized step
 handoffs. Output style gates prevent technically valid but useless rambling.
