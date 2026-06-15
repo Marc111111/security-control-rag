@@ -423,7 +423,7 @@
           metric("Model", data.model),
           metric("Est. price", `$${data.cost_estimate?.estimated_cost_usd ?? 0}`),
         ].join("");
-        workflowEl.innerHTML = data.steps.map((step, index) => renderStep(step, index)).join("");
+        setWorkflowHtml(data.steps.map((step, index) => renderStep(step, index)).join(""));
         finalEl.textContent = JSON.stringify(data.final_result, null, 2);
       }
 
@@ -435,7 +435,7 @@
           metric("LLM calls", data.llm_call_count),
           metric("Est. price", `$${data.estimated_cost_usd ?? 0}`),
         ].join("");
-        workflowEl.innerHTML = renderPreflightStep(data);
+        setWorkflowHtml(renderPreflightStep(data));
       }
 
       function renderPreflightStep(data) {
@@ -461,7 +461,7 @@
           metric("Model", job.model),
         ].join("");
         if (job.status !== "completed") {
-          workflowEl.innerHTML = `${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${renderJobStep(job)}`;
+          setWorkflowHtml(`${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${renderJobStep(job)}`);
         }
       }
 
@@ -512,6 +512,33 @@
 
       function metric(label, value) {
         return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+      }
+
+      function setWorkflowHtml(html) {
+        const previousState = detailsState();
+        workflowEl.innerHTML = html;
+        restoreDetailsState(previousState);
+      }
+
+      function detailsState() {
+        const state = new Map();
+        workflowEl.querySelectorAll("details").forEach((details, index) => {
+          state.set(detailsKey(details, index), details.open);
+        });
+        return state;
+      }
+
+      function restoreDetailsState(state) {
+        workflowEl.querySelectorAll("details").forEach((details, index) => {
+          const key = detailsKey(details, index);
+          if (state.has(key)) details.open = state.get(key);
+        });
+      }
+
+      function detailsKey(details, index) {
+        const summary = details.querySelector("summary");
+        const text = summary ? summary.textContent.replace(/\s+/g, " ").trim() : "";
+        return `${index}:${text}`;
       }
 
       function clearOutput() {
