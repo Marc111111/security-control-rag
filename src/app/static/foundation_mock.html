@@ -132,6 +132,36 @@
         align-self: end;
       }
       .config-panel .check input { width: 14px; height: 14px; }
+      .config-panel.compact-config .panel-body { padding: 6px 10px; }
+      .config-panel.compact-config .config {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 7px;
+      }
+      .config-panel.compact-config label { font-size: 10px; margin-bottom: 2px; }
+      .config-panel.compact-config select,
+      .config-panel.compact-config input {
+        height: 28px;
+        padding: 0 7px;
+        font-size: 12px;
+      }
+      .config-panel.compact-config .check {
+        min-height: 20px;
+        font-size: 10px;
+        gap: 5px;
+      }
+      .config-panel.compact-config .estimate-panel {
+        margin: 6px 0 0;
+        padding: 6px 0 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 0;
+      }
+      .config-panel.compact-config .estimate-header { margin-bottom: 4px; }
+      .config-panel.compact-config .estimate-line {
+        padding: 5px 7px;
+        gap: 5px;
+        font-size: 10px;
+      }
+      .config-panel.compact-config .estimate-note { display: none; }
       label { display: block; font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 5px; }
       select, input {
         width: 100%;
@@ -192,9 +222,9 @@
         gap: 8px;
       }
       .estimate-panel {
-        margin-bottom: 8px;
-        padding-bottom: 8px;
-        border-bottom: 1px solid var(--line);
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--line);
       }
       .estimate-header {
         display: flex;
@@ -580,8 +610,8 @@
           overflow: visible;
           padding-right: 0;
         }
-        .config, .metrics, .triptych, .form-grid { grid-template-columns: 1fr; }
-        .config-panel .config { grid-template-columns: 1fr; }
+        .metrics, .triptych, .form-grid { grid-template-columns: 1fr; }
+        .config-panel .config { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .field-card.wide { grid-column: auto; }
       }
     </style>
@@ -593,21 +623,9 @@
     </header>
     <main>
       <section class="stack">
-        <div class="panel config-panel">
+        <div class="panel config-panel compact-config">
           <div class="panel-header"><div class="panel-title">Configuration</div></div>
           <div class="panel-body">
-            <div class="estimate-panel">
-              <div class="estimate-header">
-                <div class="panel-title">Run Estimate</div>
-                <button class="secondary small" id="estimateCost">Estimate cost</button>
-              </div>
-              <div class="estimate-line" id="costEstimate">
-                <span><span class="label">Estimate</span>No estimate yet</span>
-              </div>
-              <div class="estimate-note">
-                Estimate only: no API key or model call. Actual OpenAI runs still require confirmation.
-              </div>
-            </div>
             <div class="config">
               <div>
                 <label for="provider">Provider</label>
@@ -636,6 +654,18 @@
                 <input type="checkbox" id="enforceTokenBudget" checked />
                 Enforce token guard
               </label>
+            </div>
+            <div class="estimate-panel">
+              <div class="estimate-header">
+                <div class="panel-title">Run Estimate</div>
+                <button class="secondary small" id="estimateCost" type="button" onclick="estimateCost()">Estimate cost</button>
+              </div>
+              <div class="estimate-line" id="costEstimate">
+                <span><span class="label">Estimate</span>No estimate yet</span>
+              </div>
+              <div class="estimate-note">
+                Estimate only: no API key or model call. Actual OpenAI runs still require confirmation.
+              </div>
             </div>
           </div>
         </div>
@@ -1056,6 +1086,15 @@
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         } finally {
           setBusy(false);
+        }
+      }
+
+      async function estimateCostQuietly() {
+        try {
+          const preflight = await loadPreflight(requestBody());
+          renderCostEstimate(preflight);
+        } catch (error) {
+          costEstimateEl.innerHTML = estimatePart("Estimate", `Unavailable: ${error.message}`);
         }
       }
 
@@ -1825,7 +1864,6 @@
       modelEl.addEventListener("change", clearCostEstimate);
       tokenToleranceEl.addEventListener("input", clearCostEstimate);
       enforceTokenBudgetEl.addEventListener("change", clearCostEstimate);
-      document.querySelector("#estimateCost").addEventListener("click", estimateCost);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       askCorpusEl.addEventListener("click", askCorpus);
@@ -1880,7 +1918,10 @@
       });
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
       configureModels();
-      loadSample().then(refreshRuns);
+      loadSample().then(async () => {
+        await estimateCostQuietly();
+        await refreshRuns();
+      });
     </script>
   </body>
 </html>

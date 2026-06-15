@@ -23,6 +23,9 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "scrollbar-gutter: stable" in response.text
     assert "overflow-y: auto" in response.text
     assert "min-width: 0" in response.text
+    assert "compact-config" in response.text
+    assert 'onclick="estimateCost()"' in response.text
+    assert "estimateCostQuietly" in response.text
     assert "minmax(380px, .95fr)" in response.text
     assert "@media (max-width: 860px)" in response.text
     assert "Token guard +/- %" in response.text
