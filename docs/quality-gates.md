@@ -292,6 +292,55 @@ Final report calls may use prose, but only controlled prose:
 Token gates prevent cost/runaway model-call size. Payload hygiene gates prevent oversized step
 handoffs. Output style gates prevent technically valid but useless rambling.
 
+## API-Driven Step Audit
+
+The workflow now has a repeatable API audit command:
+
+```powershell
+$env:PYTHONPATH="D:\projects\mike-test\src"
+python scripts\audit_complete_assessment_workflow.py --base-url http://127.0.0.1:8000 --provider ollama --model qwen3:14b --top-k 8
+```
+
+The auditor starts the real async HTTP job unless `--latest` or `--run-id` is supplied. It then
+checks every visible workflow step for:
+
+- clean previous-output to next-input handoff, or a recognized controlled derivation;
+- payload hygiene and absence of debug/raw prompt leakage;
+- compact selected prompt evidence after broad retrieval;
+- visible prompt output contract;
+- accepted structured risk answers with controls and matrix rows;
+- completed workflow status. A failed job is an audit failure even if the partial steps are clean.
+
+This is the operator/developer safety net for the exact issue observed in development: the user
+should not have to inspect a bloated step manually to discover prompt drift or garbage handoffs.
+
+## Evidence Curation Before LLM Calls
+
+Retrieval and prompting are deliberately separated:
+
+- Qdrant/BM25/Neo4j retrieval may return a broader set for recall and debug review.
+- `select_prompt_evidence` chooses only the compact, most relevant, source-linked excerpts for the
+  model.
+- Wrong-scope and generic governance snippets are excluded from prompt evidence when better direct
+  evidence exists.
+- Prompt evidence is capped to a small number of excerpts, and prompt-quality gates reject oversized
+  risk prompts before a model call.
+
+This keeps the model call focused while preserving debug visibility into what retrieval found.
+
+## Grounding And Pruning
+
+Risk-answer validation now checks that threat, vulnerability, and risk labels reuse meaningful
+terms from the assessment question or selected source evidence. The workflow also performs a
+deterministic pruning pass before validation: unsupported extra labels or matrix rows are removed,
+but the answer must still retain enough supported content to pass. This avoids accepting plausible
+but unsupported security language while also avoiding a full workflow failure for one extra model
+label when the core answer is grounded.
+
+Final report validation also rejects unsupported acceptance-threshold language, for example
+`acceptable risk`, unless the validated fact packet explicitly contains the threshold and decision
+basis.
+
 ## Retry Policy
 
 Default retry policy:

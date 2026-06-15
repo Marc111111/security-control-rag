@@ -69,7 +69,7 @@ def augment_answer_with_evidence_controls(
     ]
     controls = list(dict.fromkeys([*extracted, *supported_existing]))[:5]
     rows = [
-        row.model_copy(update={"controls": list(dict.fromkeys([*controls, *row.controls]))[:5]})
+        row.model_copy(update={"controls": controls or list(dict.fromkeys(row.controls))[:5]})
         for row in answer.risk_control_matrix
     ]
     return answer.model_copy(
@@ -236,4 +236,14 @@ def _scf_controls(text: str) -> list[str]:
 
 
 def _clean_title(value: str) -> str:
-    return re.sub(r"\s+", " ", value).strip(" .:-|")
+    clean = re.sub(r"\s+", " ", value).strip(" .:-|")
+    for marker in [
+        " Being able ",
+        " As malicious ",
+        " This CIS Control",
+        " Secure Controls Framework",
+        " Conformity Valid",
+    ]:
+        if marker in clean:
+            clean = clean.split(marker, 1)[0].strip(" .:-|")
+    return clean

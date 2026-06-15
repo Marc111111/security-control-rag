@@ -52,15 +52,15 @@ class WorkflowFakeChatModel:
           "executive_summary": "The weakness increases malware and ransomware exposure.",
           "assumptions": ["The vendor operates endpoints or workloads in scope."],
           "threats": ["Malware", "Ransomware"],
-          "vulnerabilities": ["Missing endpoint protection", "Untested recovery procedures"],
-          "risks": ["Business disruption", "Data loss"],
+          "vulnerabilities": ["Missing anti-malware protection", "Untested recovery planning"],
+          "risks": ["Malware execution", "Ransomware recovery"],
           "recommended_controls": ["CIS 10.1", "NIST CSF RC.RP"],
           "risk_control_matrix": [
             {
               "gap": "Weak protection or recovery",
               "threat": "Malware",
-              "vulnerability": "Missing endpoint protection",
-              "risk": "Business disruption",
+              "vulnerability": "Missing anti-malware protection",
+              "risk": "Malware execution",
               "likelihood": "medium",
               "impact": "high",
               "controls": ["CIS 10.1"],
@@ -122,7 +122,8 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     source = tmp_path / "test-standards.md"
     source.write_text(
         "CIS 10.1 requires deploying and maintaining anti-malware protection. "
-        "NIST CSF recovery planning supports ransomware recovery and restoration.",
+        "Anti-malware protection reduces malware execution. "
+        "NIST CSF recovery planning supports untested ransomware recovery and restoration.",
         encoding="utf-8",
     )
     settings = Settings(
@@ -603,7 +604,8 @@ def _standards_fixture(tmp_path: Path) -> Path:
     source = tmp_path / "test-standards.md"
     source.write_text(
         "CIS 10.1 requires deploying and maintaining anti-malware protection. "
-        "NIST CSF recovery planning supports ransomware recovery and restoration.",
+        "Anti-malware protection reduces malware execution. "
+        "NIST CSF recovery planning supports untested ransomware recovery and restoration.",
         encoding="utf-8",
     )
     return source

@@ -298,3 +298,24 @@ labels, limited lists, and no background prose. Final report calls may use prose
 2-4 sentence paragraphs with the most important finding first. OpenAI calls use
 `max_output_tokens`; Ollama calls use `num_predict`. Token gates protect model-call size/cost,
 payload hygiene gates protect step-to-step data cleanliness, and style gates protect usefulness.
+
+On 2026-06-15, the complete-assessment workflow was hardened with an API-driven step audit loop:
+
+- `scripts/audit_complete_assessment_workflow.py` runs the real HTTP workflow, polls the async job,
+  fetches the result, and audits every visible step. A failed workflow or blocking audit issue must
+  return a non-zero exit code.
+- `app.workflows.step_audit.audit_workflow_run` checks step chaining, payload hygiene, business
+  step contracts, prompt visibility, selected evidence, and accepted model outputs.
+- Retrieval now separates broad recall from model context. Qdrant/BM25/Neo4j may retrieve more
+  material, but `app.retrieval.evidence_packet.select_prompt_evidence` selects only compact,
+  source-linked excerpts for the LLM prompt.
+- Risk-answer prompt summaries now expose an `output_contract_preview` so the UI/auditor can verify
+  the model was given the expected JSON contract without opening raw logs.
+- Risk-answer validation now rejects unsupported threat/vulnerability/risk labels, then applies a
+  deterministic pruning step to remove unsupported extras before final validation. This prevents
+  plausible but source-unsupported security language from becoming workflow state.
+- Final report validation rejects unsupported risk-acceptance/threshold claims such as
+  `acceptable risk` unless the validated fact packet explicitly contains that decision basis.
+- Latest validated run at the time of this note:
+  `run-2026-06-15T114923957803+0000-4e2712b8`, `qwen3:14b`, 19 steps, audit passed,
+  actual tokens 5,983 input + 2,512 output = 8,495 total, preflight cap 46,758.

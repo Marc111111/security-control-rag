@@ -126,3 +126,48 @@ def test_parse_structured_answer_caps_enriched_controls() -> None:
 
     assert len(answer.recommended_controls) == 5
     assert len(answer.risk_control_matrix[0].controls) == 5
+
+
+def test_parse_structured_answer_replaces_row_controls_with_source_extracted_controls() -> None:
+    evidence = [
+        RetrievedEvidence(
+            chunk=DocumentChunk(
+                id="chunk-1",
+                text=(
+                    "SCF Control: Continue Essential Mission & Business Functions "
+                    "SCF #: BCD-02.2 Secure Controls Framework"
+                ),
+                metadata={"source_path": "standards/scf.xlsx"},
+            ),
+            score=0.9,
+            source="standards/scf.xlsx",
+            retrieval_method="keyword",
+        )
+    ]
+    raw = """
+    {
+      "executive_summary": "Gap increases recovery risk.",
+      "threats": ["Outage"],
+      "vulnerabilities": ["Untested recovery"],
+      "risks": ["Extended downtime"],
+      "recommended_controls": ["Invented testing control"],
+      "risk_control_matrix": [
+        {
+          "gap": "Untested recovery",
+          "threat": "Outage",
+          "vulnerability": "Untested recovery",
+          "risk": "Extended downtime",
+          "controls": ["Invented testing control"],
+          "evidence": ["S1"]
+        }
+      ],
+      "source_citations": ["S1"]
+    }
+    """
+
+    answer = parse_structured_answer(raw, evidence)
+
+    assert answer.recommended_controls == [
+        "SCF BCD-02.2 - Continue Essential Mission & Business Functions"
+    ]
+    assert answer.risk_control_matrix[0].controls == answer.recommended_controls

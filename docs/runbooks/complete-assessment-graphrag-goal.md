@@ -285,6 +285,44 @@ Implemented correction:
 - Final report prompts and validators allow prose only where useful: controlled 2-4 sentence
   paragraphs with the most important finding first.
 
+## 2026-06-15 API Step Audit And Grounding Hardening
+
+A follow-up live review showed that the previous fixes were necessary but not sufficient:
+
+- prompt previews could hide the output contract even when the real prompt had one;
+- retrieval was broad for recall, but the model still received too much mixed context;
+- the model could produce plausible but unsupported security labels such as `data breach`;
+- the final report could invent risk-acceptance language such as `acceptable risk thresholds`;
+- the user had to find these issues manually in the browser.
+
+Implemented correction:
+
+- Added `scripts/audit_complete_assessment_workflow.py`, which runs the real async HTTP workflow,
+  polls completion, fetches the result, and fails with a non-zero exit code for failed jobs or
+  blocking step-audit issues.
+- Added `app.workflows.step_audit` to validate step chaining, payload hygiene, prompt visibility,
+  selected evidence, and accepted model outputs.
+- Added `app.retrieval.evidence_packet` to separate broad retrieval from compact model context.
+  Qdrant/BM25/Neo4j can retrieve broadly, but only selected source excerpts enter the LLM prompt.
+- Risk prompt steps now include `output_contract_preview` so the UI/auditor can verify the exact
+  expected JSON shape without opening raw logs.
+- Risk-answer validation now checks that threat, vulnerability, and risk labels reuse meaningful
+  terms from the assessment question or selected source evidence.
+- A deterministic pruning pass removes unsupported extra threat/vulnerability/risk labels before
+  validation. If too much is removed or the matrix no longer has supported rows, the workflow still
+  fails.
+- Final paragraph validation now blocks unsupported risk-acceptance or threshold claims.
+
+Validated live run:
+
+- Run ID: `run-2026-06-15T114923957803+0000-4e2712b8`
+- Model: `ollama:qwen3:14b`
+- Result: completed, 19 steps, audit passed with 0 blocking issues and 0 warnings.
+- Actual tokens: 5,983 input + 2,512 output = 8,495 total.
+- Preflight cap: 46,758 total tokens.
+- Manual spot-check: Q2 and Q3 risk answers were compact and source-grounded; the final report no
+  longer included unsupported acceptable-risk threshold language.
+
 ## Known Risks And Improvements
 
 - LLM output validation now exists for the complete-assessment risk-answer and final-paragraph

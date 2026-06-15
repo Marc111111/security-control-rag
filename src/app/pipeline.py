@@ -21,13 +21,17 @@ from app.planning.planner import RiskQuestionPlanner
 from app.quality_gates import (
     GateIssue,
     QualityGateFailure,
+    combine_gate_results,
     failed_gate,
     human_failure_message,
+    prune_unsupported_risk_answer,
     repair_prompt,
     validate_prompt_contract,
+    validate_prompt_quality,
     validate_risk_answer,
 )
 from app.retrieval.bm25 import KeywordIndex
+from app.retrieval.evidence_packet import prompt_evidence_summary, select_prompt_evidence
 from app.retrieval.graph_context import build_graph_context_rows
 from app.retrieval.hybrid import HybridRetriever
 from app.retrieval.vector_store import DenseStore, MemoryDenseStore, QdrantDenseStore
@@ -144,11 +148,7 @@ class GraphRagPipeline:
             status_callback(f"Planning standards searches for {trace_label}")
         plan = self.planner.plan(full_question)
         effective_top_k = top_k or self.settings.top_k
-        plan_output = {
-            "question_for_retrieval": full_question,
-            "search_plan": plan.model_dump(),
-            "top_k": effective_top_k,
-        }
+        plan_output = _compact_plan_output(full_question, plan, effective_top_k)
         add_trace_step(
             {
                 "name": f"Plan searches for {trace_label}",
@@ -171,10 +171,16 @@ class GraphRagPipeline:
             plan,
             top_k=effective_top_k,
         )
-        graph_context_rows = build_graph_context_rows(graph_rows, evidence)
+        prompt_evidence = select_prompt_evidence(full_question, evidence)
+        graph_context_rows = build_graph_context_rows(graph_rows, prompt_evidence)
         retrieved_chunks = [hit.model_dump() for hit in evidence]
         retrieval_output = {
             "retrieved_chunks": _compact_retrieved_evidence(evidence),
+            "prompt_evidence": prompt_evidence_summary(
+                full_question,
+                len(evidence),
+                prompt_evidence,
+            ),
             "graph_context_rows": graph_context_rows,
             "raw_graph_row_count": len(graph_rows),
         }
@@ -195,7 +201,7 @@ class GraphRagPipeline:
                 "output": retrieval_output,
             }
         )
-        if not evidence:
+        if not prompt_evidence:
             answer = insufficient_evidence_answer()
             add_trace_step(
                 {
@@ -219,10 +225,10 @@ class GraphRagPipeline:
         messages = build_structured_answer_prompt(
             full_question,
             plan,
-            evidence,
+            prompt_evidence,
             graph_context_rows,
         )
-        prompt_gate = validate_prompt_contract(
+        prompt_contract_gate = validate_prompt_contract(
             gate="risk_answer_prompt",
             messages=messages,
             required_phrases=[
@@ -234,6 +240,18 @@ class GraphRagPipeline:
                 "Do not use general training knowledge",
             ],
             task_name="risk answer",
+        )
+        prompt_focus_gate = validate_prompt_quality(
+            gate="risk_answer_prompt_quality",
+            messages=messages,
+            task_name="risk answer",
+            max_total_chars=8_500,
+            max_user_chars=6_900,
+            max_source_markers=5,
+        )
+        prompt_gate = combine_gate_results(
+            "risk_answer_prompt",
+            [prompt_contract_gate, prompt_focus_gate],
         )
         if not prompt_gate.passed:
             add_trace_step(
@@ -254,7 +272,8 @@ class GraphRagPipeline:
             raise QualityGateFailure(prompt_gate)
         prompt_output = {
             "model_prompt": _compact_prompt_messages(messages),
-            "retrieved_evidence": retrieval_output,
+            "selected_prompt_evidence": retrieval_output["prompt_evidence"],
+            "graph_context_rows": graph_context_rows,
             "quality_gate": prompt_gate.as_dict(),
         }
         add_trace_step(
@@ -307,10 +326,15 @@ class GraphRagPipeline:
                 else None
             )
             try:
-                structured = parse_structured_answer_strict(raw, evidence)
+                structured = parse_structured_answer_strict(raw, prompt_evidence)
+                structured = prune_unsupported_risk_answer(
+                    answer=structured,
+                    evidence=prompt_evidence,
+                    question=full_question,
+                )
                 final_gate = validate_risk_answer(
                     answer=structured,
-                    evidence=evidence,
+                    evidence=prompt_evidence,
                     raw_model_output=raw,
                     question=full_question,
                 )
@@ -382,7 +406,7 @@ class GraphRagPipeline:
                 "score": hit.score,
                 "metadata": hit.chunk.metadata,
             }
-            for index, hit in enumerate(evidence, 1)
+            for index, hit in enumerate(prompt_evidence, 1)
         ]
         model_output = {
             "raw_model_response_preview": _preview_text(raw, 1_500),
@@ -512,11 +536,48 @@ def _merge_question_context(question: str, context: dict[str, Any] | None) -> st
     return f"{question}\n\nStructured context:\n{context_lines}"
 
 
+def _compact_plan_output(
+    full_question: str,
+    plan: Any,
+    top_k: int,
+) -> dict[str, Any]:
+    return {
+        "question_for_retrieval": full_question,
+        "search_focus": [
+            {
+                "label": sub_question.label,
+                "focus": sub_question.focus,
+                "plain_goal": _plain_search_goal(sub_question.focus),
+            }
+            for sub_question in plan.sub_questions
+        ],
+        "top_k": top_k,
+        "handoff_note": (
+            "The full internal query strings stay inside the retriever. This visible handoff "
+            "shows what we are trying to find without repeating the full question six times."
+        ),
+    }
+
+
+def _plain_search_goal(focus: str) -> str:
+    goals = {
+        "gap": "Confirm the control gap described by the weak answer.",
+        "threat": "Find threat language related to this gap.",
+        "vulnerability": "Find what weakness or missing capability can be exploited.",
+        "risk": "Find business or compliance impact language.",
+        "control": "Find concrete controls that reduce the gap or risk.",
+        "compliance": "Find framework references that support the controls.",
+    }
+    return goals.get(focus, f"Find evidence for {focus}.")
+
+
 def _compact_prompt_messages(messages: list[dict[str, str]]) -> dict[str, Any]:
     total_chars = sum(len(message.get("content", "")) for message in messages)
+    full_text = "\n".join(message.get("content", "") for message in messages)
     return {
         "message_count": len(messages),
         "total_characters_sent_to_model": total_chars,
+        "output_contract_preview": _extract_output_contract_preview(full_text),
         "messages": [
             {
                 "role": message.get("role"),
@@ -530,6 +591,17 @@ def _compact_prompt_messages(messages: list[dict[str, str]]) -> dict[str, Any]:
             "stored in the evaluation/debug log for development review."
         ),
     }
+
+
+def _extract_output_contract_preview(text: str) -> str:
+    marker = "Return exactly this JSON shape:"
+    start = text.find(marker)
+    if start < 0:
+        marker = "Output contract:"
+        start = text.find(marker)
+    if start < 0:
+        return ""
+    return _preview_text(text[start:], 1_200)
 
 
 def _compact_retrieved_evidence(evidence: list[Any]) -> list[dict[str, Any]]:
@@ -556,7 +628,7 @@ def _compact_retrieved_evidence(evidence: list[Any]) -> list[dict[str, Any]]:
                     ]
                     if metadata.get(key) is not None
                 },
-                "text_preview": _preview_text(hit.chunk.text, 700),
+                "text_preview": _preview_text(hit.chunk.text, 320),
             }
         )
     return compact

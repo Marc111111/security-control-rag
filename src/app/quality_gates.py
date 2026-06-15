@@ -85,6 +85,12 @@ def human_failure_message(result: GateResult) -> str:
             "model output leaked into the normal workflow handoff. The solution owner must compact "
             "that step so it passes only business facts, short source summaries, and clear status."
         )
+    if result.gate == "workflow_step_contract":
+        return (
+            "The workflow stopped because one step did not produce the type of business handoff "
+            "the next step needs. Do not approve this run. The solution owner must fix the step "
+            "logic, filters, prompt builder, or validator before running it again."
+        )
     parts = [
         f"Quality gate failed: {result.summary}",
     ]
@@ -135,13 +141,130 @@ def validate_prompt_contract(
     return passed_gate(gate, f"The {task_name} prompt contains the required control instructions.")
 
 
+def validate_prompt_quality(
+    *,
+    gate: str,
+    messages: list[dict[str, str]],
+    task_name: str,
+    max_total_chars: int,
+    max_user_chars: int,
+    max_source_markers: int,
+) -> GateResult:
+    text = "\n".join(message.get("content", "") for message in messages)
+    user_text = "\n".join(
+        message.get("content", "") for message in messages if message.get("role") == "user"
+    )
+    issues: list[GateIssue] = []
+    if len(text) > max_total_chars:
+        issues.append(
+            GateIssue(
+                field="messages",
+                message=(
+                    f"The {task_name} prompt is too large "
+                    f"({len(text):,} characters > {max_total_chars:,})."
+                ),
+                operator_fix=(
+                    "Do not run this prompt. It asks the model to process too much context for "
+                    "one step."
+                ),
+                system_fix=(
+                    "Curate the evidence packet before prompt construction and send only the "
+                    "best source excerpts needed for this one decision."
+                ),
+            )
+        )
+    if len(user_text) > max_user_chars:
+        issues.append(
+            GateIssue(
+                field="user_message",
+                message=(
+                    f"The {task_name} user instruction is too large "
+                    f"({len(user_text):,} characters > {max_user_chars:,})."
+                ),
+                operator_fix="Do not approve this run; the model input is not focused enough.",
+                system_fix=(
+                    "Reduce retrieved excerpts, remove repeated plan text, and split the step "
+                    "if one model call needs too much material."
+                ),
+            )
+        )
+    source_markers = len(re.findall(r"(?m)^\[S\d+\]", text))
+    if source_markers > max_source_markers:
+        issues.append(
+            GateIssue(
+                field="retrieved_evidence",
+                message=(
+                    f"The prompt includes too many cited source excerpts "
+                    f"({source_markers} > {max_source_markers})."
+                ),
+                operator_fix=(
+                    "Do not run this prompt; the analyst cannot reasonably inspect why the "
+                    "model received this much evidence for one weak answer."
+                ),
+                system_fix=(
+                    "Use the prompt evidence selector to keep only the most relevant compact "
+                    "source excerpts."
+                ),
+            )
+        )
+    noisy_fragments = [
+        '"sub_questions"',
+        '"retrieval_queries"',
+        "messages_sent_to_model",
+        "raw_model_response",
+        "prompt_messages",
+    ]
+    leaked = [fragment for fragment in noisy_fragments if fragment in text]
+    if leaked:
+        issues.append(
+            GateIssue(
+                field="messages",
+                message=(
+                    "The prompt contains workflow/debug structures instead of a clean analyst "
+                    f"instruction: {', '.join(leaked)}."
+                ),
+                operator_fix="Do not run this prompt; it is not readable enough for review.",
+                system_fix=(
+                    "Format the prompt as role, objective, trusted inputs, and output contract. "
+                    "Do not paste planner/debug JSON into the model request."
+                ),
+            )
+        )
+    if issues:
+        return failed_gate(
+            gate,
+            f"The {task_name} prompt is not focused enough for a controlled model call.",
+            issues,
+        )
+    return passed_gate(gate, f"The {task_name} prompt is focused and bounded.")
+
+
+def combine_gate_results(gate: str, results: list[GateResult]) -> GateResult:
+    issues = [issue for result in results for issue in result.issues]
+    failed = [result for result in results if not result.passed]
+    if failed:
+        return failed_gate(
+            gate,
+            "One or more required quality checks failed.",
+            issues,
+        )
+    if issues:
+        return GateResult(
+            gate=gate,
+            passed=True,
+            summary="All required quality checks passed with warnings.",
+            issues=issues,
+        )
+    return passed_gate(gate, "All required quality checks passed.")
+
+
 def validate_workflow_step_payload(
     *,
     step_name: str,
     input_payload: Any,
     output_payload: Any,
     max_payload_chars: int = 60_000,
-    max_model_prompt_chars: int = 18_000,
+    max_model_prompt_chars: int = 12_000,
 ) -> GateResult:
     issues: list[GateIssue] = []
     input_size = _json_size(input_payload)
@@ -232,6 +355,210 @@ def validate_workflow_step_payload(
     )
 
 
+def validate_workflow_step_contract(
+    *,
+    step_name: str,
+    input_payload: Any,
+    output_payload: Any,
+) -> GateResult:
+    issues: list[GateIssue] = []
+    if not step_name.strip():
+        issues.append(_step_issue("name", "Step name is missing."))
+
+    if step_name.startswith("Plan searches for "):
+        if "search_plan" in _dict(output_payload) or "retrieval_queries" in _dict(output_payload):
+            issues.append(
+                _step_issue(
+                    "output",
+                    (
+                        "Planning output exposes internal planner JSON instead of a readable "
+                        "search focus."
+                    ),
+                    system_fix=(
+                        "Return compact search_focus entries and keep full query strings inside "
+                        "the retriever."
+                    ),
+                )
+            )
+        focus = _dict(output_payload).get("search_focus")
+        if not isinstance(focus, list) or len(focus) < 4:
+            issues.append(
+                _step_issue(
+                    "output.search_focus",
+                    "Search focus is missing or incomplete.",
+                )
+            )
+
+    if step_name.startswith("Search standards evidence for "):
+        output = _dict(output_payload)
+        prompt_evidence = _dict(output.get("prompt_evidence"))
+        prompt_count = int(prompt_evidence.get("prompt_source_count") or 0)
+        retrieved_count = int(prompt_evidence.get("retrieved_source_count") or 0)
+        if prompt_count <= 0:
+            issues.append(
+                _step_issue(
+                    "output.prompt_evidence",
+                    "Retrieval did not select any compact evidence for the model prompt.",
+                    operator_fix=(
+                        "Do not approve a run that asks the model to answer without selected "
+                        "source evidence."
+                    ),
+                    system_fix=(
+                        "Improve retrieval or evidence selection. If no source is available, "
+                        "return insufficient evidence instead of calling the model."
+                    ),
+                )
+            )
+        if prompt_count > 5:
+            issues.append(
+                _step_issue(
+                    "output.prompt_evidence",
+                    f"Too many excerpts selected for the model prompt ({prompt_count} > 5).",
+                    system_fix="Keep only the highest-value excerpts for the current weak answer.",
+                )
+            )
+        if prompt_count > retrieved_count:
+            issues.append(
+                _step_issue(
+                    "output.prompt_evidence",
+                    "Selected prompt evidence count is larger than retrieved evidence count.",
+                )
+            )
+        for index, source in enumerate(prompt_evidence.get("prompt_sources") or []):
+            preview = str(_dict(source).get("text_preview") or "")
+            if len(preview) > 700:
+                issues.append(
+                    _step_issue(
+                        f"output.prompt_evidence.prompt_sources[{index}].text_preview",
+                        "Selected evidence preview is too long for a focused handoff.",
+                    )
+                )
+
+    if step_name.startswith("Prepare model prompt for "):
+        output = _dict(output_payload)
+        prompt = _dict(output.get("model_prompt"))
+        chars = int(prompt.get("total_characters_sent_to_model") or 0)
+        if chars <= 0:
+            issues.append(_step_issue("output.model_prompt", "Model prompt summary is missing."))
+        elif chars > 8_500:
+            issues.append(
+                _step_issue(
+                    "output.model_prompt",
+                    f"Risk-answer prompt is too large ({chars:,} characters > 8,500).",
+                    system_fix=(
+                        "Select fewer evidence excerpts, shorten excerpts, or split the model "
+                        "task into narrower calls."
+                    ),
+                )
+            )
+        if _dict(output.get("quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.quality_gate",
+                    "Prompt quality gate did not pass before the model call.",
+                )
+            )
+
+    if step_name.startswith("Ask model to write risk answer for "):
+        output = _dict(output_payload)
+        if "raw_model_response" in output:
+            issues.append(
+                _step_issue(
+                    "output.raw_model_response",
+                    "Full raw model output leaked into the visible workflow handoff.",
+                )
+            )
+        if _dict(output.get("quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.quality_gate",
+                    "Risk answer was not accepted by the output quality gate.",
+                )
+            )
+        structured = _dict(output.get("structured_answer"))
+        if not structured.get("risk_control_matrix"):
+            issues.append(
+                _step_issue(
+                    "output.structured_answer.risk_control_matrix",
+                    "Risk answer does not contain a risk/control matrix.",
+                )
+            )
+
+    if step_name == "Build validated fact packet for report drafting":
+        facts = _dict(output_payload).get("validated_risk_facts")
+        if not isinstance(facts, list):
+            issues.append(
+                _step_issue(
+                    "output.validated_risk_facts",
+                    "Validated fact packet does not contain validated risk facts.",
+                )
+            )
+
+    if step_name == "Ask model to draft report paragraphs":
+        prompt = _dict(_dict(input_payload).get("model_prompt"))
+        chars = int(prompt.get("total_characters_sent_to_model") or 0)
+        if chars > 16_000:
+            issues.append(
+                _step_issue(
+                    "input.model_prompt",
+                    f"Final report prompt is too large ({chars:,} characters > 16,000).",
+                    system_fix=(
+                        "Compact the validated fact packet before report drafting and avoid "
+                        "sending retrieval/debug detail."
+                    ),
+                )
+            )
+        if _dict(output_payload).get("parsed_paragraphs") is None:
+            issues.append(
+                _step_issue(
+                    "output.parsed_paragraphs",
+                    "Report model output did not parse into the required paragraph fields.",
+                )
+            )
+        if _dict(_dict(output_payload).get("quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.quality_gate",
+                    "Final paragraph quality gate did not pass.",
+                )
+            )
+
+    if issues:
+        return failed_gate(
+            "workflow_step_contract",
+            f"Workflow step '{step_name}' failed its business handoff contract.",
+            issues,
+        )
+    return passed_gate(
+        "workflow_step_contract",
+        f"Workflow step '{step_name}' passed its business handoff contract.",
+    )
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _step_issue(
+    field: str,
+    message: str,
+    *,
+    operator_fix: str = (
+        "Do not approve this run. The workflow step did not produce a clean handoff."
+    ),
+    system_fix: str = (
+        "Fix the step implementation so it passes the expected compact business object to "
+        "the next step."
+    ),
+) -> GateIssue:
+    return GateIssue(
+        field=field,
+        message=message,
+        operator_fix=operator_fix,
+        system_fix=system_fix,
+    )
+
+
 def validate_risk_answer(
     *,
     answer: StructuredRiskAnswer,
@@ -242,6 +569,7 @@ def validate_risk_answer(
     issues: list[GateIssue] = []
     source_ids = {f"S{index}" for index, _ in enumerate(evidence, 1)}
     evidence_text = "\n".join(hit.chunk.text for hit in evidence).lower()
+    support_text = f"{question}\n{evidence_text}".lower()
 
     if _looks_like_meta_failure(raw_model_output):
         issues.append(
@@ -282,6 +610,11 @@ def validate_risk_answer(
         for value in values:
             if _is_bad_text(value):
                 issues.append(_bad_text_issue(field_name, value))
+            if field_name in {"threats", "vulnerabilities", "risks"} and not _has_term_support(
+                value,
+                support_text,
+            ):
+                issues.append(_unsupported_label_issue(field_name, value))
             if _word_count(value) > 28:
                 issues.append(
                     GateIssue(
@@ -332,6 +665,11 @@ def validate_risk_answer(
             value = getattr(row, field_name)
             if not value or _is_bad_text(value):
                 issues.append(_bad_text_issue(f"{prefix}.{field_name}", value))
+            elif field_name in {"threat", "vulnerability", "risk"} and not _has_term_support(
+                value,
+                support_text,
+            ):
+                issues.append(_unsupported_label_issue(f"{prefix}.{field_name}", value))
             elif _word_count(value) > 24:
                 issues.append(
                     GateIssue(
@@ -428,6 +766,34 @@ def validate_risk_answer(
     )
 
 
+def prune_unsupported_risk_answer(
+    *,
+    answer: StructuredRiskAnswer,
+    evidence: list[RetrievedEvidence],
+    question: str,
+) -> StructuredRiskAnswer:
+    support_text = f"{question}\n" + "\n".join(hit.chunk.text for hit in evidence).lower()
+    threats = _supported_values(answer.threats, support_text)
+    vulnerabilities = _supported_values(answer.vulnerabilities, support_text)
+    risks = _supported_values(answer.risks, support_text)
+    rows = []
+    for row in answer.risk_control_matrix:
+        if not all(
+            _has_term_support(value, support_text)
+            for value in [row.threat, row.vulnerability, row.risk]
+        ):
+            continue
+        rows.append(row)
+    return answer.model_copy(
+        update={
+            "threats": threats or answer.threats,
+            "vulnerabilities": vulnerabilities or answer.vulnerabilities,
+            "risks": risks or answer.risks,
+            "risk_control_matrix": rows or answer.risk_control_matrix,
+        }
+    )
+
+
 def validate_final_paragraphs(
     *,
     paragraphs: dict[str, str],
@@ -510,6 +876,25 @@ def validate_final_paragraphs(
                 ),
                 operator_fix="Do not approve this output. It is a failed model response.",
                 system_fix="Send only the validated fact packet to the report writer and retry.",
+            )
+        )
+
+    if "acceptable risk" in joined and "acceptable risk" not in str(validated_facts).lower():
+        issues.append(
+            GateIssue(
+                field="risk_exposure",
+                message=(
+                    "Final paragraphs mention acceptable risk thresholds, but the validated "
+                    "fact packet does not define an acceptance threshold."
+                ),
+                operator_fix=(
+                    "Do not approve the report; it makes a risk-acceptance statement that was "
+                    "not established by the assessment facts."
+                ),
+                system_fix=(
+                    "Forbid threshold or acceptance statements unless the validated fact packet "
+                    "contains the threshold and decision basis."
+                ),
             )
         )
 
@@ -617,6 +1002,70 @@ def _bad_text_issue(field: str, value: object) -> GateIssue:
         operator_fix="Do not approve this output. Re-run after improving evidence or model choice.",
         system_fix="Reject placeholder/malformed values and retry with a repair prompt.",
     )
+
+
+def _unsupported_label_issue(field: str, value: object) -> GateIssue:
+    return GateIssue(
+        field=field,
+        message=(
+            "Value does not reuse meaningful terminology from the assessment question or "
+            f"selected source evidence: {str(value)[:120]}"
+        ),
+        operator_fix=(
+            "Do not approve this output. The finding may be plausible, but it is not grounded "
+            "in the selected evidence for this step."
+        ),
+        system_fix=(
+            "Repair the answer so threats, vulnerabilities, and risks use terminology present "
+            "in the selected source excerpts or assessment question."
+        ),
+    )
+
+
+def _supported_values(values: list[str], support_text: str) -> list[str]:
+    return [value for value in values if _has_term_support(value, support_text)]
+
+
+def _has_term_support(value: object, support_text: str) -> bool:
+    terms = [
+        term
+        for term in re.findall(r"[a-zA-Z][a-zA-Z0-9-]{3,}", str(value).lower())
+        if term
+        not in {
+            "risk",
+            "risks",
+            "threat",
+            "threats",
+            "vulnerability",
+            "vulnerabilities",
+            "lack",
+            "missing",
+            "unknown",
+            "high",
+            "medium",
+            "low",
+            "with",
+            "from",
+            "during",
+        }
+    ]
+    if not terms:
+        return False
+    return any(_term_supported(term, support_text) for term in terms)
+
+
+def _term_supported(term: str, support_text: str) -> bool:
+    if term in support_text:
+        return True
+    if term.endswith("ment") and term[:-4] in support_text:
+        return True
+    if term.endswith("ed") and term[:-2] in support_text:
+        return True
+    if term.endswith("ing") and term[:-3] in support_text:
+        return True
+    if term.endswith("s") and term[:-1] in support_text:
+        return True
+    return False
 
 
 def _looks_like_framework_label(control: str) -> bool:

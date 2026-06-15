@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.retrieval.graph_context import graph_context_prompt_text
 from app.schemas import QueryPlan, RetrievedEvidence
 
-MAX_EVIDENCE_CHARS = 850
+MAX_EVIDENCE_CHARS = 520
 
 SYSTEM_PROMPT = """Role:
 You are a cybersecurity and GRC risk analyst preparing source-grounded risk documentation.
@@ -23,6 +23,7 @@ Forbidden behavior:
 - Do not include markdown.
 - Do not cite sources that are not listed.
 - Do not add controls that are not present in the retrieved evidence.
+- Do not write background education or methodology commentary.
 
 Output contract:
 Return only valid JSON with exactly the requested keys.
@@ -46,11 +47,15 @@ def build_structured_answer_prompt(
     user_prompt = f"""Task:
 Create a structured risk answer for this one vendor weakness.
 
-Input explanation:
-- Question: the weakness to analyze.
-- Plan: the search decomposition used to retrieve evidence.
-- Retrieved evidence: trusted standards excerpts. Source IDs are S1, S2, etc.
-- Filtered graph hints: secondary relationship hints. Use them only when they cite S1, S2, etc.
+Inputs:
+- Question: one weak assessment answer to analyze.
+- Search focus: what the retrieval layer looked for.
+- Retrieved evidence: the selected trusted standards excerpts. Source IDs are S1, S2, etc.
+- Filtered graph hints: secondary hints. Use them only when they cite S1, S2, etc.
+
+Insufficient-evidence behavior:
+If the selected evidence does not support a field, leave that field empty and explain the missing
+source in missing_information. Do not fill gaps from general knowledge.
 
 Question:
 {question}
@@ -94,8 +99,11 @@ Rules:
 - Keep threats, vulnerabilities, risks, and assumptions to maximum 3 items each.
 - Keep recommended_controls to maximum 5 items.
 - Keep risk_control_matrix to maximum 3 rows.
+- Prefer 1-2 matrix rows when they cover the issue.
 - Keep each matrix cell short: preferably under 18 words.
 - Use crisp labels, not prose paragraphs, for threats, vulnerabilities, risks, gaps, and controls.
+- Threat, vulnerability, and risk labels must reuse meaningful words from the question or selected
+  evidence. Do not add plausible security labels that are not present in the source text.
 - Cite evidence as S1, S2, etc. only when the cited source is listed above.
 - Put standards/control IDs in recommended_controls when evidence contains them.
 - Every recommended control must be traceable to retrieved evidence.

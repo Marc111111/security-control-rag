@@ -27,6 +27,7 @@ from app.quality_gates import (
     repair_prompt,
     validate_final_paragraphs,
     validate_prompt_contract,
+    validate_workflow_step_contract,
     validate_workflow_step_payload,
 )
 from app.schemas import GraphRagAnswer
@@ -271,6 +272,35 @@ class CompleteAssessmentWorkflow:
                 if progress_callback is not None:
                     progress_callback(failure_step)
                 raise QualityGateFailure(payload_gate)
+            contract_gate = validate_workflow_step_contract(
+                step_name=step.name,
+                input_payload=step.input,
+                output_payload=step.output,
+            )
+            if not contract_gate.passed:
+                failure_step = WorkflowStep(
+                    name=f"Quality gate failed for workflow step {step.name}",
+                    explanation=(
+                        "Stops because this workflow step did not produce the clear business "
+                        "handoff that the next step needs."
+                    ),
+                    tool="Python workflow business contract gate",
+                    input={
+                        "step_name": step.name,
+                        "input_size": len(json.dumps(step.input, default=str)),
+                        "output_size": len(json.dumps(step.output, default=str)),
+                    },
+                    process=(
+                        "We check whether the step output matches the step responsibility. "
+                        "For example, retrieval must select compact evidence, prompt building "
+                        "must stay focused, and model output must pass the expected structure."
+                    ),
+                    output=contract_gate.as_dict(),
+                )
+                steps.append(failure_step)
+                if progress_callback is not None:
+                    progress_callback(failure_step)
+                raise QualityGateFailure(contract_gate)
             steps.append(step)
             if progress_callback is not None:
                 progress_callback(step)
@@ -920,6 +950,8 @@ def _paragraph_prompt(
                 "- Do not re-analyze the standards evidence.\n"
                 "- Do not include markdown.\n"
                 "- Do not invent facts outside the validated fact packet.\n\n"
+                "- Do not mention acceptable risk, thresholds, approval, or rejection unless "
+                "the validated fact packet explicitly contains that decision basis.\n\n"
                 "Output contract:\n"
                 "Return only valid JSON with exactly these keys: management_summary, "
                 "introduction, objective, risk_exposure, conclusion.\n\n"

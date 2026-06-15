@@ -1,4 +1,11 @@
-from app.quality_gates import validate_risk_answer, validate_workflow_step_payload
+from app.quality_gates import (
+    prune_unsupported_risk_answer,
+    validate_final_paragraphs,
+    validate_prompt_quality,
+    validate_risk_answer,
+    validate_workflow_step_contract,
+    validate_workflow_step_payload,
+)
 from app.schemas import DocumentChunk, MatrixRow, RetrievedEvidence, StructuredRiskAnswer
 
 
@@ -26,7 +33,10 @@ def test_risk_answer_warnings_do_not_block_otherwise_complete_answer() -> None:
         RetrievedEvidence(
             chunk=DocumentChunk(
                 id="chunk-1",
-                text="Recovery capabilities should be tested using available backups.",
+                text=(
+                    "Recovery capabilities should be tested using available backups to reduce "
+                    "system outage and extended downtime."
+                ),
             ),
             score=0.9,
             source="standards/scf.xlsx",
@@ -85,6 +95,97 @@ def test_risk_answer_gate_blocks_verbose_structured_fields() -> None:
     assert any("too verbose" in issue.message for issue in gate.issues)
 
 
+def test_risk_answer_gate_blocks_unsupported_threat_labels() -> None:
+    answer = StructuredRiskAnswer(
+        executive_summary="Summary",
+        threats=["Living-off-the-land attacks"],
+        vulnerabilities=["Unprotected endpoints"],
+        risks=["Malware execution"],
+        recommended_controls=["CIS Safeguard 10.1"],
+        risk_control_matrix=[
+            MatrixRow(
+                gap="No anti-malware",
+                threat="Living-off-the-land attacks",
+                vulnerability="Unprotected endpoints",
+                risk="Malware execution",
+                controls=["CIS Safeguard 10.1"],
+                evidence=["S1"],
+            )
+        ],
+    )
+    evidence = [
+        RetrievedEvidence(
+            chunk=DocumentChunk(
+                id="chunk-1",
+                text="CIS Safeguard 10.1 deploy anti-malware to prevent malicious code.",
+            ),
+            score=0.9,
+            source="standards/cis.pdf",
+            retrieval_method="keyword",
+        )
+    ]
+
+    gate = validate_risk_answer(
+        answer=answer,
+        evidence=evidence,
+        raw_model_output=answer.model_dump_json(),
+        question="No endpoint anti-malware is deployed.",
+    )
+
+    assert gate.passed is False
+    assert any("does not reuse meaningful terminology" in issue.message for issue in gate.issues)
+
+
+def test_prune_unsupported_risk_answer_removes_extra_unsupported_labels() -> None:
+    answer = StructuredRiskAnswer(
+        executive_summary="Summary",
+        threats=["Malware", "Unrelated phishing"],
+        vulnerabilities=["No anti-malware deployment", "Non-compliant configuration"],
+        risks=["Malware execution", "Data breach"],
+        recommended_controls=["CIS Safeguard 10.1"],
+        risk_control_matrix=[
+            MatrixRow(
+                gap="No anti-malware",
+                threat="Malware",
+                vulnerability="No anti-malware deployment",
+                risk="Malware execution",
+                controls=["CIS Safeguard 10.1"],
+                evidence=["S1"],
+            ),
+            MatrixRow(
+                gap="Other",
+                threat="Unrelated phishing",
+                vulnerability="Non-compliant configuration",
+                risk="Data breach",
+                controls=["CIS Safeguard 10.1"],
+                evidence=["S1"],
+            ),
+        ],
+    )
+    evidence = [
+        RetrievedEvidence(
+            chunk=DocumentChunk(
+                id="chunk-1",
+                text="CIS Safeguard 10.1 deploy anti-malware to prevent malware execution.",
+            ),
+            score=0.9,
+            source="standards/cis.pdf",
+            retrieval_method="keyword",
+        )
+    ]
+
+    pruned = prune_unsupported_risk_answer(
+        answer=answer,
+        evidence=evidence,
+        question="No anti-malware is deployed.",
+    )
+
+    assert pruned.threats == ["Malware"]
+    assert pruned.vulnerabilities == ["No anti-malware deployment"]
+    assert pruned.risks == ["Malware execution"]
+    assert len(pruned.risk_control_matrix) == 1
+
+
 def test_workflow_payload_gate_blocks_oversized_step_output() -> None:
     gate = validate_workflow_step_payload(
         step_name="Bad step",
@@ -95,6 +196,26 @@ def test_workflow_payload_gate_blocks_oversized_step_output() -> None:
     assert gate.passed is False
     assert gate.gate == "workflow_step_payload"
     assert gate.issues[0].field == "output"
+
+
+def test_final_paragraph_gate_blocks_unsupported_acceptable_risk_claim() -> None:
+    gate = validate_final_paragraphs(
+        paragraphs={
+            "management_summary": "Acme SaaS is a Tier 2 vendor with anti-malware gaps.",
+            "introduction": "Acme SaaS is reviewed for vendor risk.",
+            "objective": "The objective is to review endpoint and recovery gaps.",
+            "risk_exposure": "The gaps exceed acceptable risk thresholds.",
+            "conclusion": "Acme SaaS should remediate anti-malware and recovery gaps.",
+        },
+        raw_model_output="{}",
+        vendor_name="Acme SaaS",
+        tier_level=2,
+        weakness_summaries=["anti-malware gap"],
+        validated_facts={"validated_risk_facts": [{"risks": ["anti-malware gap"]}]},
+    )
+
+    assert gate.passed is False
+    assert any("acceptance threshold" in issue.message for issue in gate.issues)
 
 
 def test_workflow_payload_gate_blocks_debug_leakage() -> None:
@@ -121,3 +242,45 @@ def test_workflow_payload_gate_allows_compact_prompt_preview() -> None:
     )
 
     assert gate.passed is True
+
+
+def test_prompt_quality_gate_blocks_large_single_risk_prompt() -> None:
+    gate = validate_prompt_quality(
+        gate="risk_answer_prompt_quality",
+        messages=[
+            {"role": "system", "content": "Role: analyst"},
+            {"role": "user", "content": "\n".join([f"[S{i}] " + "x" * 900 for i in range(1, 8)])},
+        ],
+        task_name="risk answer",
+        max_total_chars=8_500,
+        max_user_chars=6_900,
+        max_source_markers=5,
+    )
+
+    assert gate.passed is False
+    assert any("too many cited source excerpts" in issue.message for issue in gate.issues)
+
+
+def test_workflow_step_contract_blocks_raw_planner_json_handoff() -> None:
+    gate = validate_workflow_step_contract(
+        step_name="Plan searches for Q2 / PR.PS-01",
+        input_payload={"selected_risk_question": {"question_id": "Q2"}},
+        output_payload={"search_plan": {"sub_questions": []}, "top_k": 8},
+    )
+
+    assert gate.passed is False
+    assert any("internal planner JSON" in issue.message for issue in gate.issues)
+
+
+def test_workflow_step_contract_requires_prompt_evidence() -> None:
+    gate = validate_workflow_step_contract(
+        step_name="Search standards evidence for Q2 / PR.PS-01",
+        input_payload={"search_focus": []},
+        output_payload={
+            "retrieved_chunks": [],
+            "prompt_evidence": {"retrieved_source_count": 0, "prompt_source_count": 0},
+        },
+    )
+
+    assert gate.passed is False
+    assert any("select any compact evidence" in issue.message for issue in gate.issues)
