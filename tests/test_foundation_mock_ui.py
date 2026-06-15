@@ -58,6 +58,13 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text
+    assert "openPacketEditorWindow" in response.text
+    assert "openPacketWindow" in response.text
+    assert "packet-state" in response.text
+    assert "json-modal" in response.text
+    assert "packetModalText" in response.text
+    assert "Apply to workflow" in response.text
+    assert '<textarea id="packet"></textarea>' not in response.text
     assert "Optional simulated DB input form" in response.text
     assert "business context manifest" in response.text
     assert "Apply form to JSON" in response.text

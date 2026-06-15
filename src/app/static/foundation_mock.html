@@ -184,7 +184,14 @@
       }
       .check input { width: 16px; height: 16px; }
       .actions { display: flex; gap: 8px; flex-wrap: wrap; }
-      button {
+      .compact-actions {
+        gap: 7px;
+      }
+      .compact-actions button {
+        padding: 7px 9px;
+      }
+      button,
+      .button-like {
         border: 1px solid var(--accent);
         background: var(--accent);
         color: #fff;
@@ -192,8 +199,13 @@
         padding: 9px 12px;
         font-weight: 800;
         cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
-      button.secondary { background: #fff; color: var(--accent); }
+      button.secondary,
+      .button-like.secondary { background: #fff; color: var(--accent); }
       button:disabled { opacity: .58; cursor: wait; }
       button.small { padding: 6px 8px; font-size: 12px; }
       .button-link {
@@ -299,6 +311,42 @@
         padding: 8px;
       }
       .technical-details summary { cursor: pointer; font-weight: 700; }
+      .json-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 45;
+        display: none;
+        align-items: stretch;
+        justify-content: center;
+        padding: 18px;
+        background: rgba(29, 39, 48, .42);
+      }
+      .json-modal.open { display: flex; }
+      .json-modal:target { display: flex; }
+      .json-box {
+        width: min(1180px, 98vw);
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        box-shadow: 0 18px 60px rgba(29, 39, 48, .24);
+        overflow: hidden;
+      }
+      .json-box textarea {
+        min-height: 0;
+        flex: 1 1 auto;
+        resize: none;
+        border-top: 1px solid var(--line);
+      }
+      .json-window-status {
+        min-height: 30px;
+        padding: 7px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        background: #fbfcfa;
+      }
       .estimate-note {
         margin-top: 4px;
         color: var(--muted);
@@ -614,6 +662,7 @@
         .config-panel .config { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .field-card.wide { grid-column: auto; }
       }
+      .packet-state { display: none; }
     </style>
   </head>
   <body>
@@ -669,6 +718,11 @@
             </div>
           </div>
         </div>
+        <div class="actions compact-actions">
+          <a class="button-like secondary" id="openPacketWindow" href="#packetModal">Simulated SQL Result JSON</a>
+          <button class="secondary" id="reset" type="button">Reset input</button>
+        </div>
+        <textarea class="packet-state" id="packet" hidden></textarea>
         <div class="panel corpus-chat">
           <div class="panel-header">
             <div class="panel-title">Ask Standards Corpus</div>
@@ -699,13 +753,6 @@
             </div>
           </div>
         </details>
-        <div class="panel">
-          <div class="panel-header">
-            <div class="panel-title">Simulated SQL Result JSON</div>
-            <button class="secondary" id="reset">Reset</button>
-          </div>
-          <textarea id="packet"></textarea>
-        </div>
         <div class="actions">
           <button id="run">Run Complete Workflow</button>
           <button class="secondary" id="cancel" disabled>Cancel Run</button>
@@ -745,6 +792,21 @@
         <div class="failure-body" id="failureBody"></div>
       </div>
     </div>
+    <div class="json-modal" id="packetModal" role="dialog" aria-modal="true" aria-labelledby="packetModalTitle">
+      <div class="json-box">
+        <div class="failure-head">
+          <strong id="packetModalTitle">Simulated SQL Result JSON</strong>
+          <div class="actions">
+            <button id="applyPacketJson" type="button">Apply to workflow</button>
+            <button class="secondary" id="formatPacketJson" type="button">Format</button>
+            <button class="secondary" id="resetPacketJson" type="button">Reset initial content</button>
+            <button class="secondary small" id="closePacketJson" type="button">Close</button>
+          </div>
+        </div>
+        <div class="json-window-status" id="packetModalStatus">Viewing the same input packet used by the workflow.</div>
+        <textarea id="packetModalText" spellcheck="false"></textarea>
+      </div>
+    </div>
     <script>
       const models = {
         ollama: ["qwen3:14b", "gemma3:4b"],
@@ -775,6 +837,13 @@
       const corpusStatusEl = document.querySelector("#corpusStatus");
       const corpusAnswerEl = document.querySelector("#corpusAnswer");
       const expandCorpusAnswerEl = document.querySelector("#expandCorpusAnswer");
+      const packetModalEl = document.querySelector("#packetModal");
+      const packetModalTextEl = document.querySelector("#packetModalText");
+      const packetModalStatusEl = document.querySelector("#packetModalStatus");
+      const applyPacketJsonEl = document.querySelector("#applyPacketJson");
+      const formatPacketJsonEl = document.querySelector("#formatPacketJson");
+      const resetPacketJsonEl = document.querySelector("#resetPacketJson");
+      const closePacketJsonEl = document.querySelector("#closePacketJson");
       const savedScenarioKey = "foundationMock.savedDbScenario";
       let sample = null;
       let currentJobId = null;
@@ -789,6 +858,14 @@
 
       function configureModels() {
         modelEl.innerHTML = models[providerEl.value].map((model) => `<option value="${model}">${model}</option>`).join("");
+        refreshEstimateOrMarkDirty();
+      }
+
+      function refreshEstimateOrMarkDirty() {
+        if (packetIsReady()) {
+          estimateCostQuietly();
+          return;
+        }
         clearCostEstimate();
       }
 
@@ -796,6 +873,7 @@
         sample = await getJson("/api/mock/foundation-packet");
         const saved = loadSavedScenario();
         packetEl.value = JSON.stringify(saved || sample, null, 2);
+        syncPacketEditorText();
         renderDbForm(currentPacket());
         clearOutput();
       }
@@ -811,6 +889,32 @@
 
       function currentPacket() {
         return JSON.parse(packetEl.value);
+      }
+
+      function packetIsReady() {
+        return Boolean(packetEl.value && packetEl.value.trim().startsWith("{"));
+      }
+
+      function applyPacketJson(text, message = "Updated workflow input from the JSON editor.") {
+        const parsed = JSON.parse(text);
+        packetEl.value = JSON.stringify(parsed, null, 2);
+        syncPacketEditorText();
+        dbFormDirty = false;
+        renderDbForm(parsed);
+        clearOutput();
+        statusEl.textContent = message;
+        estimateCostQuietly();
+        return { ok: true, message };
+      }
+
+      function resetPacketToSample(message = "Reset simulated DB input to the initial sample.") {
+        packetEl.value = JSON.stringify(sample, null, 2);
+        syncPacketEditorText();
+        window.localStorage.removeItem(savedScenarioKey);
+        renderDbForm(sample);
+        clearOutput();
+        statusEl.textContent = message;
+        estimateCostQuietly();
       }
 
       function renderDbForm(packet) {
@@ -880,6 +984,7 @@
           setPacketField(packet, input.dataset.field, input.value);
         });
         packetEl.value = JSON.stringify(packet, null, 2);
+        syncPacketEditorText();
         renderDbForm(packet);
         dbFormDirty = false;
         if (clear) clearOutput();
@@ -1020,6 +1125,49 @@
       function expandCorpusAnswer() {
         if (!lastCorpusAnswer) return;
         openTextWindow("Direct Corpus Query Result", JSON.stringify(lastCorpusAnswer, null, 2));
+      }
+
+      function syncPacketEditorText() {
+        if (packetModalTextEl) packetModalTextEl.value = packetEl.value;
+      }
+
+      function openPacketEditorWindow() {
+        syncPacketEditorText();
+        packetModalTextEl.value = packetEl.value;
+        packetModalStatusEl.textContent = "Viewing the same input packet used by the workflow.";
+        window.location.hash = "packetModal";
+        packetModalEl.classList.add("open");
+        packetModalTextEl.focus();
+      }
+
+      function closePacketEditorWindow() {
+        packetModalEl.classList.remove("open");
+        if (window.location.hash === "#packetModal") {
+          history.pushState("", document.title, window.location.pathname + window.location.search);
+        }
+      }
+
+      function applyPacketEditorValue() {
+        try {
+          const result = applyPacketJson(packetModalTextEl.value);
+          packetModalStatusEl.textContent = result.message;
+        } catch (error) {
+          packetModalStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      function formatPacketEditorValue() {
+        try {
+          packetModalTextEl.value = JSON.stringify(JSON.parse(packetModalTextEl.value), null, 2);
+          packetModalStatusEl.textContent = "Formatted JSON.";
+        } catch (error) {
+          packetModalStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      function resetPacketEditorValue() {
+        packetModalTextEl.value = JSON.stringify(sample, null, 2);
+        packetModalStatusEl.textContent = "Loaded the initial sample into this editor. Apply to update the workflow.";
       }
 
       function requestBody() {
@@ -1718,7 +1866,7 @@
 
       function clearCostEstimate() {
         lastPreflight = null;
-        costEstimateEl.innerHTML = estimatePart("Estimate", "No estimate yet");
+        costEstimateEl.innerHTML = estimatePart("Estimate", "Needs update");
       }
 
       async function refreshRuns() {
@@ -1860,12 +2008,21 @@
         return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
       }
 
+      window.estimateCost = estimateCost;
+      window.openPacketEditorWindow = openPacketEditorWindow;
       providerEl.addEventListener("change", configureModels);
-      modelEl.addEventListener("change", clearCostEstimate);
-      tokenToleranceEl.addEventListener("input", clearCostEstimate);
-      enforceTokenBudgetEl.addEventListener("change", clearCostEstimate);
+      modelEl.addEventListener("change", refreshEstimateOrMarkDirty);
+      tokenToleranceEl.addEventListener("input", refreshEstimateOrMarkDirty);
+      enforceTokenBudgetEl.addEventListener("change", refreshEstimateOrMarkDirty);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
+      applyPacketJsonEl.addEventListener("click", applyPacketEditorValue);
+      formatPacketJsonEl.addEventListener("click", formatPacketEditorValue);
+      resetPacketJsonEl.addEventListener("click", resetPacketEditorValue);
+      closePacketJsonEl.addEventListener("click", closePacketEditorWindow);
+      packetModalEl.addEventListener("click", (event) => {
+        if (event.target === packetModalEl) closePacketEditorWindow();
+      });
       askCorpusEl.addEventListener("click", askCorpus);
       expandCorpusAnswerEl.addEventListener("click", expandCorpusAnswer);
       corpusQuestionEl.addEventListener("keydown", (event) => {
@@ -1882,10 +2039,7 @@
         if (event.target === failureModalEl) closeFailureModal();
       });
       document.querySelector("#reset").addEventListener("click", () => {
-        packetEl.value = JSON.stringify(sample, null, 2);
-        window.localStorage.removeItem(savedScenarioKey);
-        renderDbForm(sample);
-        clearOutput();
+        resetPacketToSample();
       });
       document.querySelector("#applyDbForm").addEventListener("click", () => {
         applyDbFormToPacket();
@@ -1896,18 +2050,11 @@
         statusEl.textContent = "Saved this simulated DB scenario in the browser.";
       });
       document.querySelector("#resetDbScenario").addEventListener("click", () => {
-        window.localStorage.removeItem(savedScenarioKey);
-        packetEl.value = JSON.stringify(sample, null, 2);
-        renderDbForm(sample);
-        clearOutput();
-        statusEl.textContent = "Reset simulated DB input to the initial sample.";
+        resetPacketToSample();
       });
       packetEl.addEventListener("change", () => {
         try {
-          dbFormDirty = false;
-          renderDbForm(currentPacket());
-          clearCostEstimate();
-          statusEl.textContent = "Updated the optional form from the JSON.";
+          applyPacketJson(packetEl.value, "Updated the optional form from the JSON.");
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         }

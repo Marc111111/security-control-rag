@@ -114,6 +114,10 @@ grc-graphrag-api
 - `/mock/foundation` includes an optional simulated DB input form. It edits the same canonical
   packet JSON that the workflow sends, can save a browser-local scenario, and can reset to the
   initial sample. Field wording must stay aligned with `docs/business-context.md`.
+- The raw simulated SQL JSON packet is intentionally not shown as a large textarea on the main
+  `/mock/foundation` screen. It is stored in a hidden state textarea and opened through the
+  "Simulated SQL Result JSON" editor-window button to preserve left-panel space for configuration,
+  estimates, chat, and workflow actions.
 - Add tests with every new behavior.
 - GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 
