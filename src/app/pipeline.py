@@ -91,14 +91,96 @@ class GraphRagPipeline:
         top_k: int | None = None,
         debug: bool | None = None,
     ) -> GraphRagAnswer:
+        answer, _steps = self.query_with_trace(
+            question,
+            context=context,
+            top_k=top_k,
+            debug=debug,
+        )
+        return answer
+
+    def query_with_trace(
+        self,
+        question: str,
+        *,
+        context: dict[str, Any] | None = None,
+        top_k: int | None = None,
+        debug: bool | None = None,
+        trace_input: dict[str, Any] | None = None,
+        trace_label: str = "this gap",
+        model_label: str = "Selected AI model",
+    ) -> tuple[GraphRagAnswer, list[dict[str, Any]]]:
         full_question = _merge_question_context(question, context)
         plan = self.planner.plan(full_question)
+        effective_top_k = top_k or self.settings.top_k
+        trace_steps: list[dict[str, Any]] = [
+            {
+                "name": f"Plan searches for {trace_label}",
+                "explanation": (
+                    "Turns one weak assessment answer into focused searches that can be sent "
+                    "to the standards library."
+                ),
+                "tool": "Python code",
+                "input": trace_input or {"question": full_question},
+                "process": (
+                    "We take the question from the previous step and split it into smaller "
+                    "searches for gaps, threats, vulnerabilities, risks, controls, and standards."
+                ),
+                "output": {
+                    "question_for_retrieval": full_question,
+                    "search_plan": plan.model_dump(),
+                },
+            }
+        ]
         evidence, graph_rows = self._retriever().retrieve(
             plan,
-            top_k=top_k or self.settings.top_k,
+            top_k=effective_top_k,
+        )
+        retrieved_chunks = [hit.model_dump() for hit in evidence]
+        retrieval_output = {
+            "retrieved_chunks": retrieved_chunks,
+            "graph_rows": graph_rows,
+        }
+        trace_steps.append(
+            {
+                "name": f"Search standards evidence for {trace_label}",
+                "explanation": (
+                    "Looks in the standards text and relationship graph for evidence related "
+                    "to this gap."
+                ),
+                "tool": "Qdrant vector search + BM25 keyword search + Neo4j graph lookup",
+                "input": {
+                    "question_for_retrieval": full_question,
+                    "search_plan": plan.model_dump(),
+                    "top_k": effective_top_k,
+                },
+                "process": (
+                    "We use the search plan from the previous step to find matching standards "
+                    "paragraphs and graph links. This step does not ask the AI model to invent "
+                    "an answer; it only collects evidence."
+                ),
+                "output": retrieval_output,
+            }
         )
         if not evidence:
-            return insufficient_evidence_answer()
+            answer = insufficient_evidence_answer()
+            trace_steps.append(
+                {
+                    "name": f"Handle missing evidence for {trace_label}",
+                    "explanation": (
+                        "Stops this gap from being answered when the local knowledge base did "
+                        "not return useful evidence."
+                    ),
+                    "tool": "Python code",
+                    "input": retrieval_output,
+                    "process": (
+                        "Because the previous search did not find usable evidence, we return an "
+                        "insufficient-evidence result instead of asking the model to guess."
+                    ),
+                    "output": answer.model_dump(),
+                }
+            )
+            return answer, trace_steps
         messages = build_structured_answer_prompt(full_question, plan, evidence, graph_rows)
         raw = self.chat_model.chat(messages)
         structured = parse_structured_answer(raw, evidence)
@@ -112,10 +194,35 @@ class GraphRagPipeline:
             }
             for index, hit in enumerate(evidence, 1)
         ]
+        model_output = {
+            "raw_model_response": raw,
+            "structured_answer": structured.model_dump(),
+            "sources": sources,
+        }
+        trace_steps.append(
+            {
+                "name": f"Ask model to write risk answer for {trace_label}",
+                "explanation": (
+                    "Asks the selected model to turn the retrieved evidence into a structured "
+                    "risk and control answer."
+                ),
+                "tool": model_label,
+                "input": {
+                    "messages_sent_to_model": messages,
+                    "retrieved_evidence": retrieval_output,
+                },
+                "process": (
+                    "We send only the assessment question and the retrieved evidence to the "
+                    "model. The model must produce threats, vulnerabilities, risks, controls, "
+                    "and source references from that evidence."
+                ),
+                "output": model_output,
+            }
+        )
         debug_enabled = self.settings.debug if debug is None else debug
         debug_payload = {
             "plan": plan.model_dump(),
-            "retrieved_chunks": [hit.model_dump() for hit in evidence],
+            "retrieved_chunks": retrieved_chunks,
             "graph_rows": graph_rows,
             "prompt_messages": messages,
             "raw_model_response": raw,
@@ -136,7 +243,7 @@ class GraphRagPipeline:
             insufficient_evidence=False,
             sources=sources,
             debug=response_debug,
-        )
+        ), trace_steps
 
     def retrieve_debug(self, question: str, *, top_k: int | None = None) -> dict[str, Any]:
         plan = self.planner.plan(question)

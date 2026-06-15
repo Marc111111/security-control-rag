@@ -103,6 +103,13 @@ grc-graphrag-api
   `keep_alive=0s` to reduce cancellation latency and avoid the default keepalive residency.
 - `POST /api/query` remains the lower-level GraphRAG natural-language query endpoint.
 - The complete workflow must show each step's input, process, and output in the UI.
+- The workflow trace must be visually honest. Do not hide several actions inside one broad step.
+  RAG planning, Qdrant/BM25/Neo4j retrieval, and each model call must appear as individual
+  workflow steps with plain-language explanations. The input of each step should be the previous
+  step output, or the process text must explain why it changed.
+- `/mock/foundation` includes an optional simulated DB input form. It edits the same canonical
+  packet JSON that the workflow sends, can save a browser-local scenario, and can reset to the
+  initial sample. Field wording must stay aligned with `docs/business-context.md`.
 - Add tests with every new behavior.
 - GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 

@@ -6,7 +6,7 @@ from typing import Any, Literal, Protocol
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 
 from app.assessment.mock_data import MockFoundationChatModel, sample_foundation_packet
@@ -127,6 +127,10 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
     @app.get("/mock/foundation", response_class=HTMLResponse, include_in_schema=False)
     def foundation_mock_ui() -> str:
         return _static_file("foundation_mock.html")
+
+    @app.get("/mock/foundation/business-context", response_class=PlainTextResponse)
+    def foundation_business_context() -> str:
+        return _repo_file("docs/business-context.md")
 
     @app.get("/api/health")
     def health(current: GraphRagService = Depends(get_service)) -> dict[str, Any]:  # noqa: B008
@@ -380,6 +384,11 @@ app = create_app()
 def _static_file(name: str) -> str:
     path = Path(__file__).with_name("static") / name
     return path.read_text(encoding="utf-8")
+
+
+def _repo_file(path: str) -> str:
+    repo_root = Path(__file__).resolve().parents[2]
+    return (repo_root / path).read_text(encoding="utf-8")
 
 
 def _chat_model_for_comparison(

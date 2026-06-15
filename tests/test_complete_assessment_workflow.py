@@ -109,8 +109,19 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["steps"][0]["name"] == "Input source adapter"
-    assert body["steps"][2]["tool"].startswith("Qdrant + BM25 + Neo4j")
+    step_names = [step["name"] for step in body["steps"]]
+    assert step_names[:3] == [
+        "Read assessment input",
+        "Clean and sort questionnaire answers",
+        "Create risk questions from weak answers",
+    ]
+    assert any(name.startswith("Plan searches for ") for name in step_names)
+    assert any(name.startswith("Search standards evidence for ") for name in step_names)
+    assert any(name.startswith("Ask model to write risk answer for ") for name in step_names)
+    assert step_names[-1] == "Prepare final result for the application"
+    assert body["steps"][1]["input"] == body["steps"][0]["output"]
+    assert body["steps"][2]["input"] == body["steps"][1]["output"]
+    assert "risk_questions" in body["steps"][2]["output"]
     assert body["final_result"]["assessment_id"] == packet["assessment_id"]
     assert body["final_result"]["risk_evaluations"]
     assert body["cost_estimate"]["llm_call_count"] >= 2
@@ -214,7 +225,9 @@ def test_complete_assessment_job_endpoint_runs_to_completion(
     job_id = start.json()["job_id"]
     final = _wait_for_job(client, job_id)
     assert final["status"] == "completed"
-    assert final["result"]["steps"][0]["name"] == "Input source adapter"
+    assert final["current_step"] == "Finished"
+    assert final["partial_steps"]
+    assert final["result"]["steps"][0]["name"] == "Read assessment input"
 
 
 def test_complete_assessment_job_cancel_requests_ollama_stop(

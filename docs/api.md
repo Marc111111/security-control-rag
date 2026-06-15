@@ -250,6 +250,17 @@ The worker then calls `ollama stop <model>` again before marking the job `cancel
 Ollama calls use `keep_alive=0s` so a completed local run does not keep the generator resident
 for the default Ollama keepalive window.
 
+While a job is `running` or `cancelling`, the status response also includes:
+
+- `current_step`: the last completed step or the current high-level status.
+- `partial_steps`: completed workflow steps so far. The UI renders these while the job is still
+  running so an analyst can see whether the chain is progressing properly.
+
+The complete-assessment workflow is intentionally transparent. Search planning, standards
+retrieval, graph lookup, model risk-answer calls, report paragraph drafting, and final contract
+assembly are separate visible steps with their own input, plain-language process explanation, and
+output.
+
 Response:
 
 ```json
@@ -302,8 +313,17 @@ http://127.0.0.1:8000/mock/foundation
 It simulates PostgreSQL input and output without requiring PostgreSQL, Qdrant, Neo4j, Ollama, or
 OpenAI.
 
+The mock screen also includes an optional simulated database input form. It edits the same packet
+JSON sent to the workflow, can save one browser-local scenario, and can reset to the original sample.
+The business meaning of those fields is documented at:
+
+```text
+http://127.0.0.1:8000/mock/foundation/business-context
+```
+
 Mock endpoints:
 
+- `GET /mock/foundation/business-context`
 - `GET /api/mock/foundation-packet`
 - `POST /api/mock/foundation-summary`
 

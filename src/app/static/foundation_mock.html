@@ -125,6 +125,65 @@
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 8px;
       }
+      details.db-editor {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      details.db-editor > summary {
+        cursor: pointer;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 800;
+      }
+      .form-note {
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .form-note a { color: var(--accent); font-weight: 800; }
+      .form-section {
+        margin: 14px 0 8px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: #25313d;
+        font-size: 13px;
+        font-weight: 900;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .field-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfcfa;
+      }
+      .field-card.wide { grid-column: 1 / -1; }
+      .field-card textarea {
+        min-height: 72px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px;
+        font: inherit;
+      }
+      .field-help {
+        margin: 4px 0 8px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .db-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
       .metric {
         background: var(--soft);
         border: 1px solid #d4e4e0;
@@ -249,7 +308,8 @@
       .warning { color: var(--warn); }
       @media (max-width: 1050px) {
         main { grid-template-columns: 1fr; height: auto; }
-        .config, .metrics, .triptych { grid-template-columns: 1fr; }
+        .config, .metrics, .triptych, .form-grid { grid-template-columns: 1fr; }
+        .field-card.wide { grid-column: auto; }
       }
     </style>
   </head>
@@ -286,6 +346,22 @@
             </div>
           </div>
         </div>
+        <details class="db-editor" id="dbEditor">
+          <summary>Optional simulated DB input form</summary>
+          <div class="panel-body">
+            <div class="form-note">
+              Edit the business context returned by the simulated PostgreSQL query before running
+              the workflow. These fields become the actual workflow input. Field meanings are
+              documented in <a href="/mock/foundation/business-context" target="_blank" rel="noreferrer">business context manifest</a>.
+            </div>
+            <div id="dbForm"></div>
+            <div class="db-actions">
+              <button class="secondary" id="applyDbForm">Apply form to JSON</button>
+              <button class="secondary" id="saveDbScenario">Save scenario</button>
+              <button class="secondary" id="resetDbScenario">Reset initial content</button>
+            </div>
+          </div>
+        </details>
         <div class="panel">
           <div class="panel-header">
             <div class="panel-title">Simulated SQL Result JSON</div>
@@ -331,6 +407,8 @@
       const runsEl = document.querySelector("#runs");
       const metricsEl = document.querySelector("#metrics");
       const statusEl = document.querySelector("#status");
+      const dbFormEl = document.querySelector("#dbForm");
+      const savedScenarioKey = "foundationMock.savedDbScenario";
       let sample = null;
       let currentJobId = null;
       let pollTimer = null;
@@ -342,8 +420,131 @@
 
       async function loadSample() {
         sample = await getJson("/api/mock/foundation-packet");
-        packetEl.value = JSON.stringify(sample, null, 2);
+        const saved = loadSavedScenario();
+        packetEl.value = JSON.stringify(saved || sample, null, 2);
+        renderDbForm(currentPacket());
         clearOutput();
+      }
+
+      function loadSavedScenario() {
+        try {
+          const raw = window.localStorage.getItem(savedScenarioKey);
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function currentPacket() {
+        return JSON.parse(packetEl.value);
+      }
+
+      function renderDbForm(packet) {
+        const tierAttributes = Object.fromEntries((packet.tier?.attributes || []).map((item) => [item.name, item]));
+        dbFormEl.innerHTML = `
+          <div class="form-section">Vendor business context</div>
+          <div class="form-grid">
+            ${field("vendor.name", "Vendor name", "The supplier name used in the assessment and final report.", packet.vendor?.name)}
+            ${field("vendor.vendor_type", "Vendor type", "The type of supplier. This helps decide which risks and questions are relevant.", packet.vendor?.vendor_type)}
+            ${field("vendor.business_relationship", "Business relationship", "What this vendor does for the organization and why the relationship matters.", packet.vendor?.business_relationship, "textarea", true)}
+            ${field("vendor.country", "Country / region", "Where the vendor mainly operates or provides the service from.", packet.vendor?.country)}
+            ${field("vendor.services", "Services in scope", "Comma-separated services being assessed. Keep this limited to the service in scope.", (packet.vendor?.services || []).join(", "), "textarea", true)}
+          </div>
+          <div class="form-section">Tier context</div>
+          <div class="form-grid">
+            ${field("tier.level", "Tier level", "Relationship criticality level from 1 to 4. Lower means more critical in this prototype.", packet.tier?.level, "number")}
+            ${field("tier.definition", "Tier definition", "Plain-language reason why this vendor has the selected tier.", packet.tier?.definition, "textarea", true)}
+            ${tierField(tierAttributes, "company_size", "Company size", "Indicates operational footprint and vendor capacity.")}
+            ${tierField(tierAttributes, "sensitive_data_access", "Sensitive data access", "Whether the vendor processes sensitive business, customer, employee, or regulated data.")}
+            ${tierField(tierAttributes, "privileged_access", "Privileged access", "Whether the vendor can administer or deeply access internal systems.")}
+            ${tierField(tierAttributes, "geolocation", "Geolocation", "Region where the vendor operates or processes data.")}
+          </div>
+          <div class="form-section">Questionnaire answers</div>
+          ${(packet.questionnaire_results || []).map((result, index) => questionFields(result, index)).join("")}
+        `;
+      }
+
+      function field(path, label, help, value, type = "text", wide = false, options = null) {
+        const escapedValue = escapeHtml(value ?? "");
+        const control = options
+          ? `<select data-field="${escapeHtml(path)}">${options.map((option) => `<option value="${escapeHtml(option)}"${String(value) === option ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`
+          : type === "textarea"
+            ? `<textarea data-field="${escapeHtml(path)}">${escapedValue}</textarea>`
+            : `<input data-field="${escapeHtml(path)}" type="${escapeHtml(type)}" value="${escapedValue}" />`;
+        return `<div class="field-card${wide ? " wide" : ""}">
+          <label>${escapeHtml(label)}</label>
+          <div class="field-help">${escapeHtml(help)}</div>
+          ${control}
+        </div>`;
+      }
+
+      function tierField(attributes, name, label, help) {
+        const attribute = attributes[name] || { value: "", definition: help };
+        return field(`tier_attribute.${name}`, label, `${help} Current database definition: ${attribute.definition || "not supplied"}`, attribute.value);
+      }
+
+      function questionFields(result, index) {
+        const prefix = `questionnaire_results.${index}`;
+        const control = `${result.control?.framework || ""} ${result.control?.control_id || ""} - ${result.control?.title || ""}`;
+        return `<div class="form-section">${escapeHtml(result.question_id)} linked control: ${escapeHtml(control)}</div>
+          <div class="form-grid">
+            ${field(`${prefix}.question_text`, "Question text", "The question shown to the vendor.", result.question_text, "textarea", true)}
+            ${field(`${prefix}.response`, "Vendor answer", "The vendor's direct answer before analyst interpretation.", result.response)}
+            ${field(`${prefix}.compliance`, "Compliance assessment", "Analyst assessment used to decide whether this is a strength or weakness.", result.compliance, "text", false, ["full", "partial", "no", "not_applicable", "unknown"])}
+            ${field(`${prefix}.maturity`, "Control maturity", "How mature the control appears based on answer, comments, and evidence.", result.maturity, "text", false, ["basic", "developing", "implemented", "managed", "optimized", "unknown"])}
+            ${field(`${prefix}.vendor_comment`, "Vendor comment", "Free text supplied by the vendor. It is sanitized before model use.", result.vendor_comment, "textarea", true)}
+            ${field(`${prefix}.analyst_comment`, "Analyst comment", "Analyst interpretation or challenge. It is sanitized before model use.", result.analyst_comment, "textarea", true)}
+            ${field(`${prefix}.evidence_descriptions`, "Evidence descriptions", "One evidence description per line. The prototype stores descriptions only.", (result.evidence || []).map((item) => item.description).join("\n"), "textarea", true)}
+          </div>`;
+      }
+
+      function applyDbFormToPacket() {
+        const packet = currentPacket();
+        document.querySelectorAll("[data-field]").forEach((input) => {
+          setPacketField(packet, input.dataset.field, input.value);
+        });
+        packetEl.value = JSON.stringify(packet, null, 2);
+        renderDbForm(packet);
+        clearOutput();
+        statusEl.textContent = "Applied simulated DB form changes to the workflow JSON.";
+        return packet;
+      }
+
+      function setPacketField(packet, path, value) {
+        if (path === "vendor.services") {
+          packet.vendor.services = value.split(",").map((item) => item.trim()).filter(Boolean);
+          return;
+        }
+        if (path.startsWith("tier_attribute.")) {
+          const name = path.split(".")[1];
+          const attribute = (packet.tier.attributes || []).find((item) => item.name === name);
+          if (attribute) attribute.value = parseBusinessValue(value);
+          return;
+        }
+        if (path.endsWith(".evidence_descriptions")) {
+          const index = Number(path.split(".")[1]);
+          const result = packet.questionnaire_results[index];
+          result.evidence = value.split("\n").map((line, itemIndex) => line.trim()).filter(Boolean).map((description, itemIndex) => ({
+            evidence_id: result.evidence?.[itemIndex]?.evidence_id || `${result.question_id}-E${itemIndex + 1}`,
+            description,
+            file_type: result.evidence?.[itemIndex]?.file_type || "pdf"
+          }));
+          return;
+        }
+        const parts = path.split(".");
+        let target = packet;
+        for (const part of parts.slice(0, -1)) {
+          target = Array.isArray(target) ? target[Number(part)] : target[part];
+        }
+        const key = parts[parts.length - 1];
+        target[key] = key === "level" ? Number(value) : value;
+      }
+
+      function parseBusinessValue(value) {
+        if (value === "true") return true;
+        if (value === "false") return false;
+        if (value !== "" && !Number.isNaN(Number(value))) return Number(value);
+        return value;
       }
 
       async function getJson(url) {
@@ -499,17 +700,30 @@
           metric("Status", job.status),
           metric("Provider", job.provider),
           metric("Model", job.model),
+          metric("Current step", job.current_step || "Starting"),
         ].join("");
         if (job.status !== "completed") {
-          setWorkflowHtml(`${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${renderJobStep(job)}`);
+          const partialSteps = (job.partial_steps || []).map((step, index) => renderStep(step, index)).join("");
+          setWorkflowHtml(`${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${partialSteps}${renderJobStep(job, (job.partial_steps || []).length + 1)}`);
         }
       }
 
-      function renderJobStep(job) {
+      function renderJobStep(job, number) {
         const description = jobDescription(job.status);
         return `<details class="step" open>
-            ${renderStepSummary("1", "Background workflow job", description, job.status)}
-            <div class="step-body">${preview("Job", job)}</div>
+            ${renderStepSummary(number, "Background workflow job", description, job.status)}
+            <div class="step-body">
+              <div class="triptych">
+                ${preview("Input", { job_id: job.job_id, provider: job.provider, model: job.model })}
+                ${preview("Process", runningExplanation(job))}
+                ${preview("Output", {
+                  status: job.status,
+                  current_step: job.current_step,
+                  completed_steps: (job.partial_steps || []).length,
+                  error: job.error
+                })}
+              </div>
+            </div>
           </details>`;
       }
 
@@ -551,14 +765,35 @@
         return descriptions[status] || "This shows the current background run and its latest status.";
       }
 
+      function runningExplanation(job) {
+        if (job.status === "completed") return "The workflow has finished successfully and the final result is ready for review.";
+        if (job.status === "cancelled") return "The workflow was stopped before producing a final result.";
+        if (job.status === "failed") return "The workflow stopped because one of the steps failed. Check the output block for the error.";
+        if (job.status === "cancelling") return "The workflow is stopping now. The local model is being asked to unload from the GPU.";
+        return `The workflow is still running. The last completed step is: ${job.current_step || "none yet"}. This page will keep polling until the job finishes, fails, or is cancelled.`;
+      }
+
       function friendlyStepDescription(name, fallback) {
         const descriptions = {
-          "Input source adapter": "This step takes the vendor assessment data from the source system and turns it into the standard format used by the workflow.",
-          "Sanitize and classify assessment data": "This step cleans the vendor and analyst comments, then separates answers into strengths, weaknesses, and items that need clarification.",
-          "Retrieve standards evidence with GraphRAG": "This step searches the standards library and relationship graph to find evidence for the relevant threats, vulnerabilities, risks, and controls.",
-          "Draft business-facing paragraphs": "This step writes readable report text from the assessment data and retrieved evidence. It should not invent facts outside that material.",
-          "Prepare PostgreSQL draft result contract": "This step packages the reviewed output into the structured result that your application can later store."
+          "Read assessment input": "This step takes the vendor assessment data from the source system and turns it into the standard format used by the workflow.",
+          "Clean and sort questionnaire answers": "This step cleans the vendor and analyst comments, then separates answers into strengths, weaknesses, and items that need clarification.",
+          "Create risk questions from weak answers": "This step turns each weak answer into a search question that can be checked against the standards library.",
+          "Collect risk answers for report drafting": "This step collects all risk answers into one smaller evidence package for report writing.",
+          "Ask model to draft report paragraphs": "This step writes readable report text from the assessment data and retrieved evidence. It should not invent facts outside that material.",
+          "Prepare final result for the application": "This step packages the reviewed output into the structured result that your application can later store."
         };
+        if (name.startsWith("Plan searches for ")) {
+          return "This step takes one risk question and decides which smaller searches are needed before looking in the standards library.";
+        }
+        if (name.startsWith("Search standards evidence for ")) {
+          return "This step searches the standards text and graph for evidence that matches the risk question from the previous step.";
+        }
+        if (name.startsWith("Ask model to write risk answer for ")) {
+          return "This step asks the selected model to turn the retrieved evidence into threats, vulnerabilities, risks, controls, and citations.";
+        }
+        if (name.startsWith("Handle missing evidence for ")) {
+          return "This step stops the workflow from guessing when the standards library did not return useful evidence for the risk question.";
+        }
         return descriptions[name] || fallback || "This step processes part of the assessment and passes its result to the next step.";
       }
 
@@ -616,7 +851,7 @@
       }
 
       function setBusy(busy, text) {
-        document.querySelectorAll("button, select, input").forEach((item) => {
+        document.querySelectorAll("button, select, input, textarea").forEach((item) => {
           item.disabled = busy;
         });
         document.querySelector("#cancel").disabled = !busy || !currentJobId;
@@ -634,7 +869,32 @@
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       document.querySelector("#reset").addEventListener("click", () => {
         packetEl.value = JSON.stringify(sample, null, 2);
+        window.localStorage.removeItem(savedScenarioKey);
+        renderDbForm(sample);
         clearOutput();
+      });
+      document.querySelector("#applyDbForm").addEventListener("click", () => {
+        applyDbFormToPacket();
+      });
+      document.querySelector("#saveDbScenario").addEventListener("click", () => {
+        const packet = applyDbFormToPacket();
+        window.localStorage.setItem(savedScenarioKey, JSON.stringify(packet));
+        statusEl.textContent = "Saved this simulated DB scenario in the browser.";
+      });
+      document.querySelector("#resetDbScenario").addEventListener("click", () => {
+        window.localStorage.removeItem(savedScenarioKey);
+        packetEl.value = JSON.stringify(sample, null, 2);
+        renderDbForm(sample);
+        clearOutput();
+        statusEl.textContent = "Reset simulated DB input to the initial sample.";
+      });
+      packetEl.addEventListener("change", () => {
+        try {
+          renderDbForm(currentPacket());
+          statusEl.textContent = "Updated the optional form from the JSON.";
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
       });
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
       configureModels();

@@ -41,6 +41,15 @@ tests, and a workflow UI/API.
 - Planner-driven sub-question retrieval for each weak questionnaire answer.
 - Selected model is used for both GraphRAG answer synthesis and final business prose drafting.
 - Result contract assembly is deterministic Python code, not LLM-controlled JSON structure.
+- The browser workflow must show a transparent step chain. Do not collapse RAG planning, standards
+  retrieval, graph lookup, or model calls into one broad tab. Each visible tab should show input,
+  plain-language process explanation, and output.
+- The job status endpoint returns `partial_steps` while the workflow is running so the UI can show
+  which steps finished and which step is currently active.
+- The optional simulated DB input form on `/mock/foundation` edits the canonical packet JSON before
+  the first adapter step. It supports applying changes, browser-local scenario save, and reset to
+  the initial sample. Field meanings are documented in `docs/business-context.md` and served at
+  `/mock/foundation/business-context`.
 - Exact recommended controls are post-processed from retrieved evidence text, because local models
   can misread framework version numbers as control IDs.
 - Run output is saved under `data/workflow_runs`.

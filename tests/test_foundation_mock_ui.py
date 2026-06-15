@@ -17,6 +17,20 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text
+    assert "Optional simulated DB input form" in response.text
+    assert "business context manifest" in response.text
+    assert "Apply form to JSON" in response.text
+    assert "Save scenario" in response.text
+
+
+def test_foundation_business_context_manifest_is_served() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/mock/foundation/business-context")
+
+    assert response.status_code == 200
+    assert "Tier Context" in response.text
+    assert "Questionnaire Result Context" in response.text
 
 
 def test_mock_foundation_summary_endpoint_runs_without_external_services() -> None:

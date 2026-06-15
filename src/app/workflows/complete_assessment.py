@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -86,6 +87,7 @@ class CompleteAssessmentWorkflow:
         request: CompleteAssessmentRequest,
         *,
         cancel_event: threading.Event | None = None,
+        progress_callback: Callable[[WorkflowStep], None] | None = None,
     ) -> dict[str, Any]:
         _validate_model_selection(request.model)
         packet, input_source = _resolve_input_source(request)
@@ -101,14 +103,20 @@ class CompleteAssessmentWorkflow:
         original_pipeline_chat_model = self.pipeline.chat_model
         self.pipeline.chat_model = selected_chat_model
 
+        def add_step(step: WorkflowStep) -> None:
+            steps.append(step)
+            if progress_callback is not None:
+                progress_callback(step)
+
         try:
             _raise_if_cancelled(cancel_event)
             sql_query = _simulated_sql(packet.assessment_id)
-            steps.append(
+            add_step(
                 WorkflowStep(
-                    name="Input source adapter",
+                    name="Read assessment input",
                     explanation=(
-                        "Normalizes source data to the assessment packet used by the chain."
+                        "Reads the vendor assessment data and converts it into the common "
+                        "format used by the rest of the workflow."
                     ),
                     tool=f"{input_source.adapter} + PostgreSQL (simulated)",
                     input={
@@ -117,61 +125,92 @@ class CompleteAssessmentWorkflow:
                         "payload": input_source.payload,
                     },
                     process=(
-                        "Only this adapter knows the source SQL/result shape. "
-                        "The rest of the workflow uses the normalized contract."
+                        "We start with the simulated SQL result. This step keeps the database "
+                        "shape separate from the workflow, so production PostgreSQL can later "
+                        "send a different shape through another adapter."
                     ),
                     output={"normalized_packet": packet.model_dump(mode="json")},
                 )
             )
 
             _raise_if_cancelled(cancel_event)
+            normalized_output = {"normalized_packet": packet.model_dump(mode="json")}
             sanitized = sanitize_packet(packet)
             findings = classify_findings(sanitized)
-            steps.append(
+            classified_output = {
+                "sanitized_packet": sanitized.model_dump(mode="json"),
+                "findings": _findings_dump(findings),
+            }
+            add_step(
                 WorkflowStep(
-                    name="Sanitize and classify assessment data",
+                    name="Clean and sort questionnaire answers",
                     explanation=(
-                        "Cleans text and separates strengths, weaknesses, and unknowns."
+                        "Cleans the input text and sorts answers into strengths, weaknesses, "
+                        "and answers that still need clarification."
                     ),
                     tool="Python deterministic workflow",
-                    input=packet.model_dump(mode="json"),
+                    input=normalized_output,
                     process=(
-                        "Sanitize comments; full compliance becomes strengths; "
-                        "partial/no compliance becomes weaknesses."
+                        "We take the normalized packet from the previous step, clean the free "
+                        "text, and classify every questionnaire answer. Full compliance becomes "
+                        "a strength. Partial or no compliance becomes a weakness to evaluate."
                     ),
-                    output={
-                        "sanitized_packet": sanitized.model_dump(mode="json"),
-                        "findings": _findings_dump(findings),
-                    },
+                    output=classified_output,
                 )
             )
 
             retrieval_input = _risk_queries(sanitized, findings)
+            add_step(
+                WorkflowStep(
+                    name="Create risk questions from weak answers",
+                    explanation=(
+                        "Turns each weak questionnaire answer into a clear question that can "
+                        "be searched in the standards library."
+                    ),
+                    tool="Python deterministic workflow",
+                    input=classified_output,
+                    process=(
+                        "We use only the weaknesses from the previous step. For each one, we "
+                        "build a search question that includes the vendor tier, the linked "
+                        "control, the vendor response, and the analyst comment."
+                    ),
+                    output={"risk_questions": retrieval_input},
+                )
+            )
             rag_answers: list[GraphRagAnswer] = []
             for item in retrieval_input:
                 _raise_if_cancelled(cancel_event)
-                answer = self.pipeline.query(
+                trace_label = f"{item['question_id']} / {item['context']['control']['control_id']}"
+                answer, trace_steps = self.pipeline.query_with_trace(
                     item["retrieval_question"],
                     top_k=request.top_k,
                     debug=True,
+                    trace_input={"risk_question_from_previous_step": item},
+                    trace_label=trace_label,
+                    model_label=f"{request.model.provider}:{request.model.model}",
                 )
+                for trace_step in trace_steps:
+                    _raise_if_cancelled(cancel_event)
+                    add_step(WorkflowStep(**trace_step))
                 rag_answers.append(answer)
             retrieval_output = [_rag_answer_dump(answer) for answer in rag_answers]
             compact_risk_evidence = _compact_rag_evidence(retrieval_output)
-            steps.append(
+            rag_evidence_output = {"retrieved_risk_evidence": compact_risk_evidence}
+            add_step(
                 WorkflowStep(
-                    name="Retrieve standards evidence with GraphRAG",
-                    explanation="Retrieves standards evidence for each weak answer.",
-                    tool=(
-                        "Qdrant + BM25 + Neo4j + "
-                        f"{request.model.provider}:{request.model.model}"
+                    name="Collect risk answers for report drafting",
+                    explanation=(
+                        "Collects the risk answers from all weak questionnaire answers so the "
+                        "report-writing step has one clean evidence package."
                     ),
-                    input=retrieval_input,
+                    tool="Python deterministic workflow",
+                    input={"risk_answer_outputs": retrieval_output},
                     process=(
-                        "Planner decomposes each gap; Qdrant, BM25, and Neo4j retrieve "
-                        "evidence; the selected model writes a structured risk answer."
+                        "The previous steps produced one answer per weak control. Here we keep "
+                        "the useful parts, trim oversized debug text, and prepare the evidence "
+                        "package that will be sent to the report-writing model."
                     ),
-                    output=retrieval_output,
+                    output=rag_evidence_output,
                 )
             )
 
@@ -194,19 +233,29 @@ class CompleteAssessmentWorkflow:
                     "Paragraph prompt exceeds max_estimated_input_tokens "
                     f"({paragraph_input_tokens} > {request.model.max_estimated_input_tokens})"
                 )
+            paragraph_input = {
+                "evidence_package_from_previous_step": rag_evidence_output,
+                "messages_sent_to_model": paragraph_messages,
+                "api_key": "[hidden]",
+            }
             _raise_if_cancelled(cancel_event)
             raw_paragraphs = selected_chat_model.chat(paragraph_messages)
             _raise_if_cancelled(cancel_event)
             paragraphs = _parse_paragraphs(raw_paragraphs, sanitized, findings)
-            steps.append(
+            add_step(
                 WorkflowStep(
-                    name="Draft business-facing paragraphs",
+                    name="Ask model to draft report paragraphs",
                     explanation=(
-                        "Writes report prose from retrieved and classified evidence."
+                        "Asks the selected model to turn the assessment data and retrieved "
+                        "evidence into readable report text."
                     ),
                     tool=f"{request.model.provider}:{request.model.model}",
-                    input={"messages": paragraph_messages, "api_key": "[hidden]"},
-                    process="LLM must use only supplied assessment data and retrieved evidence.",
+                    input=paragraph_input,
+                    process=(
+                        "We send the evidence package from the previous step plus the cleaned "
+                        "assessment data. The model is instructed to write only the requested "
+                        "paragraphs and not decide scores, schema, or database fields."
+                    ),
                     output={
                         "raw_model_output": raw_paragraphs,
                         "parsed_paragraphs": paragraphs,
@@ -221,13 +270,24 @@ class CompleteAssessmentWorkflow:
                 findings,
                 compact_risk_evidence,
             )
-            steps.append(
+            add_step(
                 WorkflowStep(
-                    name="Prepare PostgreSQL draft result contract",
-                    explanation="Builds the final contract for analyst review.",
+                    name="Prepare final result for the application",
+                    explanation=(
+                        "Packages the paragraphs, strengths, weaknesses, and risk answers into "
+                        "the structured result your application can store later."
+                    ),
                     tool="Python deterministic workflow",
-                    input={"paragraphs": paragraphs, "findings": _findings_dump(findings)},
-                    process="No LLM decides the output schema or persistence flags.",
+                    input={
+                        "paragraphs_from_previous_step": paragraphs,
+                        "classified_findings": _findings_dump(findings),
+                        "risk_evidence_package": compact_risk_evidence,
+                    },
+                    process=(
+                        "This step is plain Python. It takes the model-written paragraphs from "
+                        "the previous step and places them into the fixed output contract. The "
+                        "AI model does not decide the database shape."
+                    ),
                     output=final_result,
                 )
             )

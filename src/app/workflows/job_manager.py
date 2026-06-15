@@ -34,6 +34,8 @@ class WorkflowJob:
     updated_at: str = field(default_factory=_now)
     result: dict[str, Any] | None = None
     error: str | None = None
+    current_step: str | None = None
+    partial_steps: list[dict[str, Any]] = field(default_factory=list)
     cancel_event: threading.Event = field(default_factory=threading.Event)
 
     def snapshot(self) -> dict[str, Any]:
@@ -46,6 +48,8 @@ class WorkflowJob:
             "model": self.request.model.model,
             "result": self.result,
             "error": self.error,
+            "current_step": self.current_step,
+            "partial_steps": self.partial_steps,
             "preflight": estimate_complete_assessment_preflight(self.request),
         }
 
@@ -104,7 +108,11 @@ class WorkflowJobManager:
                 pipeline=pipeline,
                 run_store=WorkflowRunStore(pipeline.settings.run_store_path),
             )
-            result = workflow.run(job.request, cancel_event=job.cancel_event)
+            result = workflow.run(
+                job.request,
+                cancel_event=job.cancel_event,
+                progress_callback=lambda step: self._add_progress_step(job, step.as_dict()),
+            )
         except WorkflowCancelled as exc:
             self._update(job, status="cancelled", error=str(exc))
             return
@@ -120,7 +128,7 @@ class WorkflowJobManager:
         if job.cancel_event.is_set():
             self._update(job, status="cancelled", error="Cancelled after completion")
             return
-        self._update(job, status="completed", result=result, error=None)
+        self._update(job, status="completed", result=result, error=None, current_step="Finished")
 
     def _update(
         self,
@@ -129,11 +137,20 @@ class WorkflowJobManager:
         status: JobStatus,
         result: dict[str, Any] | None = None,
         error: str | None = None,
+        current_step: str | None = None,
     ) -> None:
         job.status = status
         job.updated_at = _now()
         job.result = result
         job.error = error
+        if current_step is not None:
+            job.current_step = current_step
+
+    def _add_progress_step(self, job: WorkflowJob, step: dict[str, Any]) -> None:
+        with self.lock:
+            job.partial_steps.append(step)
+            job.current_step = step.get("name")
+            job.updated_at = _now()
 
 
 def _stop_ollama_model(model: str) -> None:
