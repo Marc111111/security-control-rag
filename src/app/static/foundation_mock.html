@@ -41,7 +41,14 @@
         padding: 16px;
         height: calc(100vh - 64px);
       }
-      .stack { min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+      .stack {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        overflow: auto;
+        padding-right: 4px;
+      }
       .panel {
         background: var(--panel);
         border: 1px solid var(--line);
@@ -137,6 +144,10 @@
         border-bottom: 1px solid var(--line);
         font-size: 13px;
         font-weight: 800;
+      }
+      details.db-editor > .panel-body {
+        max-height: min(68vh, 760px);
+        overflow: auto;
       }
       .form-note {
         margin-bottom: 12px;
