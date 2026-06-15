@@ -160,6 +160,29 @@
         grid-template-columns: repeat(4, minmax(0, 1fr));
         gap: 8px;
       }
+      .estimate-panel {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+      }
+      .estimate-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .estimate-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .estimate-note {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.4;
+      }
       details.db-editor {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -403,6 +426,19 @@
                 Enforce token guard
               </label>
             </div>
+            <div class="estimate-panel">
+              <div class="estimate-header">
+                <div class="panel-title">Run Estimate</div>
+                <button class="secondary small" id="estimateCost">Estimate cost</button>
+              </div>
+              <div class="estimate-grid" id="costEstimate">
+                <div class="metric"><span>Status</span><strong>No estimate yet</strong></div>
+              </div>
+              <div class="estimate-note">
+                Estimates use the selected provider/model and current input. No API key is needed
+                because this does not call OpenAI or Ollama.
+              </div>
+            </div>
           </div>
         </div>
         <details class="db-editor" id="dbEditor">
@@ -429,7 +465,6 @@
           <textarea id="packet"></textarea>
         </div>
         <div class="actions">
-          <button class="secondary" id="refreshEstimate">Refresh estimate</button>
           <button id="run">Run Complete Workflow</button>
           <button class="secondary" id="cancel" disabled>Cancel Run</button>
           <button class="secondary" id="refreshRuns">Refresh Saved Runs</button>
@@ -474,6 +509,7 @@
       const finalEl = document.querySelector("#finalResult");
       const expandFinalEl = document.querySelector("#expandFinal");
       const codexReviewEl = document.querySelector("#codexReview");
+      const costEstimateEl = document.querySelector("#costEstimate");
       const runsEl = document.querySelector("#runs");
       const metricsEl = document.querySelector("#metrics");
       const statusEl = document.querySelector("#status");
@@ -491,6 +527,7 @@
 
       function configureModels() {
         modelEl.innerHTML = models[providerEl.value].map((model) => `<option value="${model}">${model}</option>`).join("");
+        clearCostEstimate();
       }
 
       async function loadSample() {
@@ -693,14 +730,14 @@
         }
       }
 
-      async function refreshEstimate() {
+      async function estimateCost() {
         try {
-          setBusy(true, "Refreshing estimate for the current input...");
+          setBusy(true, "Estimating cost for the current input...");
           const preflight = await loadPreflight(requestBody());
           renderPreflight(preflight);
           statusEl.textContent = preflight.will_exceed_guard
-            ? "Estimate refreshed. This run would be blocked by the current token guard."
-            : "Estimate refreshed for the current input. No model call was made.";
+            ? "Estimate complete. This run would be blocked by the current token guard."
+            : "Estimate complete for the current input. No model call was made.";
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         } finally {
@@ -785,15 +822,8 @@
 
       function renderPreflight(data) {
         lastPreflight = data;
-        metricsEl.innerHTML = [
-          metric("Preflight", data.will_exceed_guard ? "Blocked" : "OK"),
-          metric("Input tokens", data.estimated_input_tokens),
-          metric("Total estimate", data.estimated_total_tokens),
-          metric("Token cap", data.allowed_total_tokens),
-          metric("Estimate policy", data.estimate_policy || "n/a"),
-          metric("LLM calls", data.llm_call_count),
-          metric("Est. one-run price", costLabel(data)),
-        ].join("");
+        renderCostEstimate(data);
+        metricsEl.innerHTML = "";
         setWorkflowHtml(renderPreflightStep(data));
       }
 
@@ -1055,6 +1085,23 @@
         return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
       }
 
+      function renderCostEstimate(data) {
+        if (!data) {
+          costEstimateEl.innerHTML = metric("Status", "No estimate yet");
+          return;
+        }
+        costEstimateEl.innerHTML = [
+          metric("Provider / model", `${data.provider}:${data.model}`),
+          metric("Status", data.will_exceed_guard ? "Blocked" : "OK"),
+          metric("Input tokens", data.estimated_input_tokens),
+          metric("Output tokens", data.estimated_output_tokens),
+          metric("Total tokens", data.estimated_total_tokens),
+          metric("Token cap", data.allowed_total_tokens),
+          metric("LLM calls", data.llm_call_count),
+          metric("Cost", costLabel(data)),
+        ].join("");
+      }
+
       function tokenComparisonLabel(tokenBudget) {
         if (!tokenBudget) return "n/a";
         const actual = tokenBudget.actual_total_tokens ?? 0;
@@ -1146,6 +1193,12 @@
         updateFinalActions();
         metricsEl.innerHTML = "";
         statusEl.textContent = "Ready. No workflow has run yet.";
+        clearCostEstimate();
+      }
+
+      function clearCostEstimate() {
+        lastPreflight = null;
+        costEstimateEl.innerHTML = metric("Status", "No estimate yet");
       }
 
       async function refreshRuns() {
@@ -1160,7 +1213,7 @@
         });
         document.querySelector("#cancel").disabled = !busy || !currentJobId;
         document.querySelector("#run").disabled = busy;
-        document.querySelector("#refreshEstimate").disabled = busy;
+        document.querySelector("#estimateCost").disabled = busy;
         document.querySelector("#refreshRuns").disabled = busy;
         if (!busy) updateFinalActions();
         if (text) statusEl.textContent = text;
@@ -1177,7 +1230,10 @@
       }
 
       providerEl.addEventListener("change", configureModels);
-      document.querySelector("#refreshEstimate").addEventListener("click", refreshEstimate);
+      modelEl.addEventListener("change", clearCostEstimate);
+      tokenToleranceEl.addEventListener("input", clearCostEstimate);
+      enforceTokenBudgetEl.addEventListener("change", clearCostEstimate);
+      document.querySelector("#estimateCost").addEventListener("click", estimateCost);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       expandFinalEl.addEventListener("click", expandFinalResult);
@@ -1207,6 +1263,7 @@
         try {
           dbFormDirty = false;
           renderDbForm(currentPacket());
+          clearCostEstimate();
           statusEl.textContent = "Updated the optional form from the JSON.";
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
@@ -1214,6 +1271,7 @@
       });
       dbFormEl.addEventListener("input", () => {
         dbFormDirty = true;
+        clearCostEstimate();
       });
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
       configureModels();

@@ -264,7 +264,6 @@ def test_complete_assessment_openai_preflight_returns_usd_and_eur_cost(
             "model": {
                 "provider": "openai",
                 "model": "gpt-4.1-mini",
-                "confirm_external_call": True,
             },
             "top_k": 8,
         },

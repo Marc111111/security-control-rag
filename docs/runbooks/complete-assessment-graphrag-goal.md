@@ -70,9 +70,11 @@ tests, and a workflow UI/API.
   review packet" button. The packet contains initial input, run metadata, workflow summaries, final
   result, and a review rubric. It is not an automatic Codex API call; it is a handoff packet for the
   Codex desktop agent unless a real authorized review endpoint is added later.
-- The workflow UI has a manual "Refresh estimate" button. It preflights the current edited input
-  without starting a run or calling a model. Dirty optional-form edits are synced into the request
-  before the estimate is generated.
+- The workflow UI has a manual "Estimate cost" button at the bottom of the Configuration panel. It
+  preflights the current edited input and selected model without starting a run, calling a model, or
+  requiring an API key. Dirty optional-form edits are synced into the request before the estimate is
+  generated. The estimate display must include input tokens, output tokens, total tokens, token cap,
+  and USD/EUR cost where applicable.
 - Workflow step tabs should be created closed by default during polling. Preserve user open/closed
   state across polling updates. Do not auto-open the current or newest step.
 - Running jobs show ETA from the median duration of previous completed saved runs, preferring the

@@ -208,8 +208,10 @@ Supported model selections:
 - Local: `provider=ollama`, `model=qwen3:14b` or `gemma3:4b`.
 - External: `provider=openai`, `model=gpt-5.4-mini`, `gpt-5.4`, `gpt-5.5`, or `gpt-4.1-mini`.
 
-OpenAI requests require `confirm_external_call=true` and either a request-scoped
-`openai_api_key` or `OPENAI_API_KEY` in the environment.
+OpenAI cost/token estimates do not require `confirm_external_call` or an API key because preflight
+does not call the external model. Actual OpenAI workflow runs require
+`confirm_external_call=true` and either a request-scoped `openai_api_key` or `OPENAI_API_KEY` in
+the environment.
 
 Preflight response:
 

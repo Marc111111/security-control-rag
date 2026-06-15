@@ -264,7 +264,9 @@ Do not represent this as an automatic Codex API call unless a real authorized Co
 added later.
 
 The workflow UI must not force-open workflow step tabs while polling. New step tabs should be
-created closed, and existing open/closed state should be preserved. The left metrics area includes a
-manual "Refresh estimate" button that preflights the current edited input without model calls, and
-an ETA during running jobs based on median duration from previous completed saved runs. If no saved
-duration history exists, show that honestly.
+created closed, and existing open/closed state should be preserved. The Configuration panel includes
+a manual "Estimate cost" button at the bottom. It preflights the current edited input and selected
+model without model calls or API keys, and it must show input tokens, output tokens, total tokens,
+token cap, and cost. Actual OpenAI runs still require explicit confirmation/API credentials. Running
+jobs show ETA based on median duration from previous completed saved runs. If no saved duration
+history exists, show that honestly.

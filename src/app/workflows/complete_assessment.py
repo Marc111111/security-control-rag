@@ -210,7 +210,7 @@ class CompleteAssessmentWorkflow:
         progress_callback: Callable[[WorkflowStep], None] | None = None,
         status_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
-        _validate_model_selection(request.model)
+        _validate_model_selection(request.model, require_external_confirmation=True)
         packet, input_source = _resolve_input_source(request)
         preflight = estimate_complete_assessment_preflight(request)
         created_at = datetime.now(UTC).isoformat()
@@ -539,7 +539,7 @@ class CompleteAssessmentWorkflow:
 def estimate_complete_assessment_preflight(
     request: CompleteAssessmentRequest,
 ) -> dict[str, Any]:
-    _validate_model_selection(request.model)
+    _validate_model_selection(request.model, require_external_confirmation=False)
     packet, input_source = _resolve_input_source(request)
     sanitized = sanitize_packet(packet)
     findings = classify_findings(sanitized)
@@ -603,7 +603,11 @@ def estimate_complete_assessment_preflight(
     }
 
 
-def _validate_model_selection(model: ModelSelection) -> None:
+def _validate_model_selection(
+    model: ModelSelection,
+    *,
+    require_external_confirmation: bool = True,
+) -> None:
     allowed_local = {"qwen3:14b", "gemma3:4b"}
     allowed_openai = {"gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4.1-mini"}
     if model.provider == "ollama" and model.model not in allowed_local:
@@ -611,7 +615,7 @@ def _validate_model_selection(model: ModelSelection) -> None:
     if model.provider == "openai":
         if model.model not in allowed_openai:
             raise ValueError(f"Unsupported OpenAI model: {model.model}")
-        if not model.confirm_external_call:
+        if require_external_confirmation and not model.confirm_external_call:
             raise ValueError("OpenAI calls require confirm_external_call=true")
 
 
