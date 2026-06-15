@@ -133,7 +133,10 @@ Checks:
 - chunks are relevant to the weakness
 - source metadata includes source path and chunk ID
 - evidence is not only generic framework boilerplate
-- graph rows are relevant to the same topic before being sent to a prompt
+- graph rows are filtered before prompt construction:
+  - keep only rows whose `source_chunk_id` maps to one of the retrieved chunks
+  - drop malformed entity labels and partial framework/risk-code fragments
+  - present graph output as secondary hints, not authoritative text evidence
 - source IDs are stable for later citation checks
 
 Failure behavior: return an explicit insufficient-evidence result. Do not ask the model to guess.

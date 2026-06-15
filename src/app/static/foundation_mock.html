@@ -247,6 +247,16 @@
       .failure-body p { margin: 0 0 8px; }
       .failure-body ul { margin: 0 0 10px 20px; padding: 0; }
       .failure-body code { background: var(--soft); padding: 1px 4px; border-radius: 4px; }
+      .failure-body pre {
+        white-space: pre-wrap;
+        overflow: auto;
+        max-height: 180px;
+        background: var(--soft);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .technical-details summary { cursor: pointer; font-weight: 700; }
       .estimate-note {
         margin-top: 4px;
         color: var(--muted);
@@ -965,31 +975,96 @@
         );
         const gate = gateStep?.output?.quality_gate;
         const issues = gate?.issues || [];
+        const human = humanizeFailure(job, gateStep, gate, issues);
         return {
-          title: gate ? "Workflow failed a quality gate" : "Workflow failed",
-          message: gate?.summary || job.error || "The workflow stopped before producing a valid result.",
+          title: human.title,
+          message: human.message,
+          whatWentWrong: human.whatWentWrong,
+          whyItHappened: human.whyItHappened,
           failedStep: gateStep?.name || job.current_step,
-          operatorFixes: issues.map((issue) => issue.operator_fix).filter(Boolean),
-          systemFixes: issues.map((issue) => issue.system_fix).filter(Boolean),
+          operatorFixes: human.operatorFixes,
+          systemFixes: human.systemFixes,
           issues,
           rawError: job.error,
+          technicalSummary: gate?.summary,
+        };
+      }
+
+      function humanizeFailure(job, gateStep, gate, issues) {
+        const gateName = String(gate?.gate || "");
+        const fields = issues.map((issue) => String(issue.field || ""));
+        const isRiskAnswer = gateName === "risk_answer_output" || String(gateStep?.name || "").includes("risk answer");
+        const hasMatrixMissing = fields.some((field) => field.startsWith("risk_control_matrix"));
+        const hasRawOutput = fields.includes("raw_model_output");
+        if (isRiskAnswer && hasMatrixMissing) {
+          return {
+            title: "The model could not produce a complete risk matrix",
+            message: "The standards search found relevant material, but the selected model did not turn it into a complete risk/control matrix after the allowed repair attempts.",
+            whatWentWrong: [
+              "The answer missed required business fields in one or more matrix rows: gap, threat, vulnerability, risk, controls, or evidence.",
+              "Because those fields are needed for traceability, the workflow stopped instead of producing a report from incomplete facts."
+            ],
+            whyItHappened: [
+              "The model likely struggled with the prompt content or returned a different structure than the workflow contract.",
+              "If graph hints were noisy or too generic, they can distract a local model from the cleaner standards excerpts."
+            ],
+            operatorFixes: [
+              "Do not approve or use this run.",
+              "Retry with a stronger model after the system owner has reviewed retrieval and prompt quality."
+            ],
+            systemFixes: [
+              "Inspect the prompt input for the failed step and remove noisy graph hints before they reach the model.",
+              "Improve the repair prompt or output normalizer so useful answers are either corrected safely or rejected with a clear reason."
+            ]
+          };
+        }
+        if (isRiskAnswer && hasRawOutput) {
+          return {
+            title: "The model did not return usable risk data",
+            message: "The selected model returned text that could not be safely read as the required risk-analysis structure.",
+            whatWentWrong: ["The response was malformed, off-topic, or not valid structured output."],
+            whyItHappened: ["The prompt may be too large, the context may be noisy, or the selected model may be too weak for this step."],
+            operatorFixes: ["Do not approve this run.", "Retry after the system owner has reduced prompt noise or selected a stronger model."],
+            systemFixes: ["Reduce prompt size, keep only validated evidence, and strengthen the repair instruction for this step."]
+          };
+        }
+        if (gateName === "final_paragraph_output") {
+          return {
+            title: "The report draft failed quality checks",
+            message: "The model did not produce the required business report sections from the validated facts.",
+            whatWentWrong: ["One or more required report sections were missing, generic, or inconsistent with the validated assessment facts."],
+            whyItHappened: ["The report-writing prompt or selected model did not follow the expected report contract."],
+            operatorFixes: ["Do not approve this report draft."],
+            systemFixes: ["Inspect the final report prompt and repair step before relying on this output."]
+          };
+        }
+        return {
+          title: gate ? "The workflow failed a quality check" : "The workflow failed",
+          message: gate?.summary || job.error || "The workflow stopped before producing a valid result.",
+          whatWentWrong: issues.length ? [...new Set(issues.map((issue) => issue.message || "A required check failed."))] : ["The workflow stopped before producing a valid result."],
+          whyItHappened: ["A required workflow step returned output that did not match the expected contract."],
+          operatorFixes: [...new Set(issues.map((issue) => issue.operator_fix).filter(Boolean))],
+          systemFixes: [...new Set(issues.map((issue) => issue.system_fix).filter(Boolean))]
         };
       }
 
       function showFailureModal(details) {
         const uniqueOperator = [...new Set(details.operatorFixes || [])];
         const uniqueSystem = [...new Set(details.systemFixes || [])];
-        const issues = details.issues || [];
         failureBodyEl.innerHTML = `
           <p><strong>${escapeHtml(details.message || "The workflow failed.")}</strong></p>
-          ${details.failedStep ? `<p>Failed step: <code>${escapeHtml(details.failedStep)}</code></p>` : ""}
-          ${details.rawError ? `<p>Raw error: ${escapeHtml(details.rawError)}</p>` : ""}
-          ${issues.length ? `<h3>What went wrong</h3><ul>${issues.map((issue) => `<li><strong>${escapeHtml(issue.field || "output")}</strong>: ${escapeHtml(issue.message || "Validation failed.")}</li>`).join("")}</ul>` : ""}
+          ${details.failedStep ? `<p>Failed step: ${escapeHtml(details.failedStep)}</p>` : ""}
+          <h3>What went wrong</h3>
+          <ul>${(details.whatWentWrong || ["The workflow stopped before producing a valid result."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          <h3>Why it probably happened</h3>
+          <ul>${(details.whyItHappened || ["A workflow step returned output that did not match the expected contract."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
           <h3>Operator action</h3>
           <ul>${(uniqueOperator.length ? uniqueOperator : ["Do not approve this run. Review the failed workflow step and retry after correcting the input or source evidence."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
           <h3>System owner action</h3>
           <ul>${(uniqueSystem.length ? uniqueSystem : ["Inspect the failed quality gate and adjust the workflow design, prompt, retrieval, or validator before relying on this output."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          ${details.rawError ? `<details class="technical-details"><summary>Technical details</summary><pre>${escapeHtml(details.rawError)}</pre></details>` : ""}
         `;
+        document.querySelector("#failureTitle").textContent = details.title || "Workflow failed";
         failureModalEl.classList.add("open");
       }
 

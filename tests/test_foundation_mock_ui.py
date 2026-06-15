@@ -30,8 +30,11 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "buildCodexReviewPacket" in response.text
     assert "Development-only independent quality review" in response.text
     assert "failureModal" in response.text
+    assert "The model could not produce a complete risk matrix" in response.text
+    assert "Why it probably happened" in response.text
     assert "Operator action" in response.text
     assert "System owner action" in response.text
+    assert "Technical details" in response.text
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text

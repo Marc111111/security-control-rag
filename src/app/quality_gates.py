@@ -51,6 +51,33 @@ class QualityGateFailure(RuntimeError):
 
 
 def human_failure_message(result: GateResult) -> str:
+    if result.gate == "risk_answer_output":
+        fields = {issue.field for issue in result.issues}
+        missing_matrix = any(field.startswith("risk_control_matrix") for field in fields)
+        if missing_matrix:
+            return (
+                "The workflow stopped while building a risk/control matrix. Standards evidence "
+                "was retrieved, but the selected model did not return complete gap, threat, "
+                "vulnerability, risk, control, and evidence values after the repair attempts. "
+                "Do not approve this run; retry with a stronger model or ask the solution owner "
+                "to improve graph filtering and the repair prompt."
+            )
+        if "raw_model_output" in fields:
+            return (
+                "The workflow stopped because the selected model did not return usable structured "
+                "risk analysis. Do not approve this run; retry with a stronger model or reduce "
+                "the prompt context."
+            )
+        return (
+            "The workflow stopped because the selected model response did not meet the required "
+            "risk-analysis structure. Do not approve this run until the failed step is corrected."
+        )
+    if result.gate == "final_paragraph_output":
+        return (
+            "The workflow stopped while drafting the business report. The model response did not "
+            "match the required report sections or did not use the validated facts. Do not approve "
+            "this run until the report-writing step is corrected."
+        )
     parts = [
         f"Quality gate failed: {result.summary}",
     ]

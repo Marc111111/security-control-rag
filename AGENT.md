@@ -286,3 +286,9 @@ demonstrated the failure mode: the final paragraph model call returned JSON-repa
 the parser hid it behind generic paragraphs. The final report writer now receives a clean validated
 fact packet, not raw debug dumps or malformed risk answers. The browser shows failed workflow/job
 quality gates in a modal with operator and system-owner remediation guidance.
+
+GraphRAG prompt context must stay clean. A later Q2 / PR.PS-01 failure showed that text retrieval
+found the right CIS/SCF anti-malware evidence, but raw graph rows included loose, malformed
+relationship labels and distracted the local model. Qdrant/BM25 text evidence is now authoritative;
+graph rows must be filtered to retrieved chunk IDs, malformed graph entity names must be dropped,
+and prompts must describe graph output as secondary filtered hints.

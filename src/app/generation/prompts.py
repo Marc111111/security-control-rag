@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import json
-
+from app.retrieval.graph_context import graph_context_prompt_text
 from app.schemas import QueryPlan, RetrievedEvidence
 
 SYSTEM_PROMPT = """Role:
@@ -11,9 +10,11 @@ Objective:
 Analyze exactly one vendor control weakness using only the supplied trusted inputs.
 
 Trusted evidence boundary:
-Use only the assessment question, retrieval plan, retrieved evidence, and graph traversal evidence
-provided in this prompt. Do not use general training knowledge to invent threats, vulnerabilities,
-risks, controls, certifications, citations, or implementation facts.
+Use only the assessment question, retrieval plan, retrieved text evidence, and filtered graph hints
+provided in this prompt. Retrieved text evidence is authoritative. Graph hints are secondary and
+must be used only when they point to one of the listed source IDs.
+Do not use general training knowledge to invent threats, vulnerabilities, risks, controls,
+certifications, citations, or implementation facts.
 
 Forbidden behavior:
 - Do not critique, repair, or explain the JSON prompt.
@@ -34,7 +35,7 @@ def build_structured_answer_prompt(
     evidence_text = "\n\n".join(
         _format_evidence(index, hit) for index, hit in enumerate(evidence, 1)
     )
-    graph_text = json.dumps(graph_rows[:20], ensure_ascii=True, indent=2)
+    graph_text = graph_context_prompt_text(graph_rows)
     user_prompt = f"""Task:
 Create a structured risk answer for this one vendor weakness.
 
@@ -42,7 +43,7 @@ Input explanation:
 - Question: the weakness to analyze.
 - Plan: the search decomposition used to retrieve evidence.
 - Retrieved evidence: trusted standards excerpts. Source IDs are S1, S2, etc.
-- Graph traversal evidence: trusted relationship hints from the graph database.
+- Filtered graph hints: secondary relationship hints. Use them only when they cite S1, S2, etc.
 
 Question:
 {question}
@@ -53,7 +54,7 @@ Plan:
 Retrieved evidence:
 {evidence_text}
 
-Graph traversal evidence:
+Filtered graph hints:
 {graph_text}
 
 Return exactly this JSON shape:

@@ -380,9 +380,8 @@ def test_complete_assessment_fails_visible_quality_gate_for_bad_final_paragraphs
 
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "Quality gate failed" in detail
-    assert "Operator fix" in detail
-    assert "System fix" in detail
+    assert "business report" in detail
+    assert "Do not approve" in detail
 
 
 def test_complete_assessment_job_endpoint_runs_to_completion(
@@ -447,7 +446,7 @@ def test_complete_assessment_job_reports_quality_gate_failure_step(
     assert start.status_code == 200
     final = _wait_for_job(client, start.json()["job_id"])
     assert final["status"] == "failed"
-    assert "Quality gate failed" in final["error"]
+    assert "risk/control matrix" in final["error"]
     failed_steps = [
         step for step in final["partial_steps"] if "Quality gate failed" in step["name"]
     ]

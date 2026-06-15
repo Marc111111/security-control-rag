@@ -1,3 +1,6 @@
+from app.generation.prompts import build_structured_answer_prompt
+from app.planning.planner import RiskQuestionPlanner
+from app.schemas import DocumentChunk, RetrievedEvidence
 from secure_rag.prompts import build_grounded_prompt
 from secure_rag.schema import Chunk, RetrievalHit
 
@@ -20,3 +23,41 @@ def test_grounded_prompt_includes_sources_and_criteria() -> None:
     assert "[S1]" in messages[1]["content"]
     assert "nist.md#page=4" in messages[1]["content"]
 
+
+def test_structured_answer_prompt_uses_filtered_graph_hints_not_raw_graph() -> None:
+    evidence = [
+        RetrievedEvidence(
+            chunk=DocumentChunk(
+                id="chunk-1",
+                text="CIS Safeguard 10.1 requires anti-malware software.",
+                metadata={"source_path": "standards/cis.pdf"},
+            ),
+            score=1.0,
+            source="standards/cis.pdf",
+            retrieval_method="keyword",
+        )
+    ]
+    plan = RiskQuestionPlanner().plan("No anti-malware is deployed.")
+    messages = build_structured_answer_prompt(
+        "No anti-malware is deployed.",
+        plan,
+        evidence,
+        [
+            {
+                "evidence": "S1",
+                "relationship": "CONTROL_MITIGATES_RISK",
+                "source_type": "Control",
+                "source": "CIS Safeguard 10.1",
+                "target_type": "Risk",
+                "target": "Malware infection",
+            }
+        ],
+    )
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert "Retrieved text evidence is authoritative" in prompt
+    assert (
+        "S1: Control 'CIS Safeguard 10.1' CONTROL_MITIGATES_RISK Risk "
+        "'Malware infection'"
+    ) in prompt
+    assert "source_chunk_id" not in prompt

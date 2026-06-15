@@ -28,6 +28,7 @@ from app.quality_gates import (
     validate_risk_answer,
 )
 from app.retrieval.bm25 import KeywordIndex
+from app.retrieval.graph_context import build_graph_context_rows
 from app.retrieval.hybrid import HybridRetriever
 from app.retrieval.vector_store import DenseStore, MemoryDenseStore, QdrantDenseStore
 from app.schemas import GraphRagAnswer
@@ -170,10 +171,12 @@ class GraphRagPipeline:
             plan,
             top_k=effective_top_k,
         )
+        graph_context_rows = build_graph_context_rows(graph_rows, evidence)
         retrieved_chunks = [hit.model_dump() for hit in evidence]
         retrieval_output = {
             "retrieved_chunks": retrieved_chunks,
-            "graph_rows": graph_rows,
+            "graph_context_rows": graph_context_rows,
+            "raw_graph_row_count": len(graph_rows),
         }
         add_trace_step(
             {
@@ -213,7 +216,12 @@ class GraphRagPipeline:
             return answer, trace_steps
         if status_callback is not None:
             status_callback(f"Preparing model prompt for {trace_label}")
-        messages = build_structured_answer_prompt(full_question, plan, evidence, graph_rows)
+        messages = build_structured_answer_prompt(
+            full_question,
+            plan,
+            evidence,
+            graph_context_rows,
+        )
         prompt_gate = validate_prompt_contract(
             gate="risk_answer_prompt",
             messages=messages,
@@ -406,7 +414,8 @@ class GraphRagPipeline:
         debug_payload = {
             "plan": plan.model_dump(),
             "retrieved_chunks": retrieved_chunks,
-            "graph_rows": graph_rows,
+            "graph_context_rows": graph_context_rows,
+            "raw_graph_row_count": len(graph_rows),
             "prompt_messages": messages,
             "raw_model_response": raw,
         }
@@ -434,10 +443,12 @@ class GraphRagPipeline:
             plan,
             top_k=top_k or self.settings.top_k,
         )
+        graph_context_rows = build_graph_context_rows(graph_rows, evidence)
         return {
             "plan": plan.model_dump(),
             "retrieved_chunks": [hit.model_dump() for hit in evidence],
-            "graph_rows": graph_rows,
+            "graph_context_rows": graph_context_rows,
+            "raw_graph_row_count": len(graph_rows),
         }
 
     def foundation_summary(

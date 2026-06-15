@@ -229,12 +229,39 @@ These items are now implemented for the complete-assessment risk-answer and fina
 calls. Remaining expansion work is to apply the same gate pattern to any other future LLM-powered
 workflow and to improve the semantic validators as real analyst feedback accumulates.
 
+## 2026-06-15 Q2 Graph Noise Finding
+
+A failed `Q2 / PR.PS-01 Endpoint protection` run showed that text retrieval worked correctly: the
+top evidence included CIS malware defenses and SCF endpoint anti-malware controls. The workflow
+stopped because the local model could not produce a complete risk/control matrix after repair
+attempts.
+
+Root cause:
+
+- graph lookup matched loose query terms, including generic words such as `risk` and `control`;
+- raw graph rows were not restricted to relationships anchored to the retrieved evidence chunks;
+- heuristic graph extraction had created malformed entity labels from dense standards text, such as
+  partial risk-code fragments;
+- the prompt treated raw graph rows as trusted graph evidence, which distracted the local model from
+  the cleaner standards excerpts.
+
+Implemented correction:
+
+- Qdrant/BM25 text evidence is now the anchor for model prompts.
+- Graph rows are filtered before prompt construction and retained only when their `source_chunk_id`
+  maps to one of the retrieved source chunks.
+- Malformed graph entity labels are dropped before the prompt is built.
+- The prompt now calls graph rows `filtered graph hints`; retrieved text evidence is explicitly
+  authoritative.
+- The browser failure modal now explains the failed risk matrix in human language and keeps raw
+  technical error details collapsed.
+
 ## Known Risks And Improvements
 
 - LLM output validation now exists for the complete-assessment risk-answer and final-paragraph
   calls. Continue improving semantic checks as new failure modes are observed.
-- The graph extractor is heuristic. It is useful for a prototype but should later be replaced or
-  supplemented by a stronger controlled extractor with confidence scoring.
+- The graph extractor is heuristic. Graph prompt rows are now filtered, but the extractor should
+  later be replaced or supplemented by a stronger controlled extractor with confidence scoring.
 - BM25 persistence appends chunks. Re-ingestion should clear or version the keyword index to avoid
   duplicate keyword hits. Tests must use temporary `keyword_index_path` values and never write to
   `third_party/keyword_index/chunks.jsonl`.

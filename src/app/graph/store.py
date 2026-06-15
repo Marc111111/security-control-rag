@@ -4,6 +4,34 @@ from typing import Protocol
 
 from app.schemas import GraphEntity, GraphRelationship
 
+GRAPH_QUERY_STOP_WORDS = {
+    "and",
+    "are",
+    "control",
+    "controls",
+    "data",
+    "does",
+    "from",
+    "identify",
+    "into",
+    "place",
+    "planned",
+    "quarter",
+    "risk",
+    "risks",
+    "security",
+    "solution",
+    "standards",
+    "threat",
+    "threats",
+    "using",
+    "vendor",
+    "vulnerabilities",
+    "vulnerability",
+    "what",
+    "with",
+}
+
 
 class GraphStore(Protocol):
     def upsert(self, entities: list[GraphEntity], relationships: list[GraphRelationship]) -> None:
@@ -37,7 +65,7 @@ class MemoryGraphStore:
                 existing.add(key)
 
     def search_related(self, query: str, *, limit: int = 20) -> list[dict[str, object]]:
-        terms = {term for term in query.lower().split() if len(term) > 2}
+        terms = _graph_query_terms(query)
         matched = [
             entity
             for entity in self.entities.values()
@@ -99,7 +127,7 @@ class Neo4jGraphStore:
                 )
 
     def search_related(self, query: str, *, limit: int = 20) -> list[dict[str, object]]:
-        terms = [term for term in query.lower().split() if len(term) > 2]
+        terms = sorted(_graph_query_terms(query))
         with self.driver.session() as session:
             result = session.run(
                 """
@@ -122,3 +150,12 @@ class Neo4jGraphStore:
                 }
                 for record in result
             ]
+
+
+def _graph_query_terms(query: str) -> set[str]:
+    return {
+        term.strip(".,;:!?()[]{}\"'").lower()
+        for term in query.split()
+        if len(term.strip(".,;:!?()[]{}\"'")) > 3
+        and term.strip(".,;:!?()[]{}\"'").lower() not in GRAPH_QUERY_STOP_WORDS
+    }
