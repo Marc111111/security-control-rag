@@ -56,9 +56,12 @@ tests, and a workflow UI/API.
 - Request-scoped OpenAI API key is accepted but never persisted or returned.
 - Browser runs are async. The UI preflights token/cost estimates before model calls, starts a
   background job, polls status, and can cancel running jobs.
-- Preflight now also defines a workflow token cap. Default behavior is to enforce the estimate plus
-  `token_budget_tolerance_percent` (10% by default), compare it with actual provider usage where
-  available, and return per-call token usage in `token_budget.calls`.
+- Preflight now also defines a workflow token cap. The estimate is cumulative for one complete
+  workflow run across all LLM calls and is deliberately conservative. Default behavior is to enforce
+  the estimate plus `token_budget_tolerance_percent` (10% by default), compare it with actual
+  provider usage where available, and return per-call token usage in `token_budget.calls`.
+- Local Ollama models show token counts with zero API price. External OpenAI preflight/run output
+  shows estimated USD and EUR cost using the configured model price table and USD-to-EUR rate.
 - UI workflow steps must remain a readable handoff chain: previous output becomes next input.
   Multi-answer loops need explicit selection and storage steps so the chain does not appear to jump.
 - Each Input, Process, and Output preview has an Expand button that opens a separate inspection
@@ -175,4 +178,6 @@ http://127.0.0.1:8000/mock/foundation
 - Reranking is lightweight. Add a local reranker when an available model is confirmed.
 - The normalized assessment packet is a prototype contract. Production PostgreSQL can map into it
   through a new adapter, or the contract can version forward if product data changes.
-- Cost estimates are conservative rough estimates. They are sufficient for comparison, not billing.
+- Cost estimates are conservative rough estimates for one complete run. They should be biased high
+  so normal runs usually finish below the estimate. They are sufficient for comparison and budget
+  protection, not billing.

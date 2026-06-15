@@ -627,7 +627,7 @@
           model: modelEl.value,
           confirm_external_call: confirmEl.checked,
           estimated_output_tokens: 1200,
-          max_estimated_input_tokens: 24000,
+          max_estimated_input_tokens: 60000,
           enforce_token_budget: enforceTokenBudgetEl.checked,
           token_budget_tolerance_percent: Number(tokenToleranceEl.value || 10),
         };
@@ -726,7 +726,7 @@
           metric("Run", data.run_id),
           metric("Provider", data.provider),
           metric("Model", data.model),
-          metric("Est. price", `$${data.cost_estimate?.estimated_cost_usd ?? 0}`),
+          metric("Est. one-run price", costLabel(data.cost_estimate)),
           metric("Tokens actual/est.", tokenComparisonLabel(data.token_budget)),
           metric("Token cap", data.token_budget?.allowed_total_tokens ?? "n/a"),
         ].join("");
@@ -741,8 +741,9 @@
           metric("Input tokens", data.estimated_input_tokens),
           metric("Total estimate", data.estimated_total_tokens),
           metric("Token cap", data.allowed_total_tokens),
+          metric("Estimate policy", data.estimate_policy || "n/a"),
           metric("LLM calls", data.llm_call_count),
-          metric("Est. price", `$${data.estimated_cost_usd ?? 0}`),
+          metric("Est. one-run price", costLabel(data)),
         ].join("");
         setWorkflowHtml(renderPreflightStep(data));
       }
@@ -759,7 +760,7 @@
                 tolerance_percent: data.token_budget_tolerance_percent,
                 enforce_token_budget: data.enforce_token_budget
               })}
-              ${preview("Process", "We estimate the full workflow before any model is called. The token cap is the estimate plus the configured tolerance. If a later prompt would push the run above that cap, the workflow stops before sending the next model call.")}
+              ${preview("Process", "We estimate the full workflow before any model is called. This estimate is deliberately conservative: it reserves room for all planned model calls, retrieved standards chunks, graph context, report drafting, and a safety margin. The token cap is the estimate plus the configured tolerance. If a later prompt would push the run above that cap, the workflow stops before sending the next model call.")}
               ${preview("Output", data)}
             </div>
           </div>
@@ -925,6 +926,14 @@
         const diff = tokenBudget.difference_percent ?? 0;
         const sign = diff > 0 ? "+" : "";
         return `${actual} / ${estimate} (${sign}${diff}%)`;
+      }
+
+      function costLabel(data) {
+        if (!data) return "$0";
+        const usd = Number(data.estimated_cost_usd || 0);
+        const eur = Number(data.estimated_cost_eur || 0);
+        if (!usd && !eur) return "$0 / EUR 0";
+        return `$${usd.toFixed(6)} / EUR ${eur.toFixed(6)}`;
       }
 
       function setWorkflowHtml(html) {

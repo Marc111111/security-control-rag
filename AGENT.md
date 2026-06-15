@@ -245,8 +245,13 @@ answers, add explicit selection/storage steps instead of hiding the branch. Each
 and Output preview should support opening a separate inspection window that can be closed without
 affecting the workflow page.
 
-The complete workflow has a token budget guard. Preflight estimates the total workflow tokens, then
-the configured `token_budget_tolerance_percent` produces `allowed_total_tokens`. Keep
-`enforce_token_budget=true` as the default. The workflow must compare final actual usage against
-preflight and include per-call token usage in `token_budget.calls`. Use provider-reported token
-counts when available and the local rough estimate only as a fallback.
+The complete workflow has a token budget guard. Preflight estimates the cumulative tokens for one
+complete workflow run across all planned LLM calls, then the configured
+`token_budget_tolerance_percent` produces `allowed_total_tokens`. Keep
+`enforce_token_budget=true` as the default. The estimate should be conservative by design: prefer a
+high estimate and a positive surprise after the run over an underestimate that blocks normal work or
+risks external-model spend. The workflow must compare final actual usage against preflight and
+include per-call token usage in `token_budget.calls`. Use provider-reported token counts when
+available and the local rough estimate only as a fallback. Internal Ollama models should show token
+counts with zero API cost. External OpenAI estimates should show USD and EUR using the configured
+pricing table and USD-to-EUR rate.

@@ -184,7 +184,7 @@ Request:
     "model": "qwen3:14b",
     "confirm_external_call": false,
     "estimated_output_tokens": 1200,
-    "max_estimated_input_tokens": 24000,
+    "max_estimated_input_tokens": 60000,
     "enforce_token_budget": true,
     "token_budget_tolerance_percent": 10
   },
@@ -224,21 +224,33 @@ Preflight response:
   "retrieval_query_count": 2,
   "top_k": 8,
   "llm_call_count": 3,
-  "estimated_input_tokens": 11214,
+  "estimated_input_tokens": 38907,
   "estimated_output_tokens": 3600,
-  "estimated_total_tokens": 14814,
+  "estimated_total_tokens": 42507,
+  "estimate_policy": "conservative_workflow_reserve",
   "enforce_token_budget": true,
   "token_budget_tolerance_percent": 10,
-  "allowed_total_tokens": 16296,
+  "allowed_total_tokens": 46758,
   "estimated_cost_usd": 0.0,
+  "estimated_cost_eur": 0.0,
+  "usd_to_eur_rate": 0.92,
+  "price_per_million_tokens": null,
+  "pricing_note": "Internal/local model run: token use is tracked, but API price is $0.",
   "will_exceed_guard": false
 }
 ```
 
-`allowed_total_tokens` is the workflow estimate plus the configured tolerance. When
+`estimated_total_tokens` is cumulative for one complete workflow run across all planned LLM calls.
+The estimate is intentionally conservative: it reserves tokens for the assessment packet, findings,
+each risk-answer prompt, top-k retrieved chunks, graph context, final report drafting, and a safety
+margin. `allowed_total_tokens` is the workflow estimate plus the configured tolerance. When
 `enforce_token_budget=true`, the workflow checks each model call before it is sent and again after
 the response is received. Provider-reported token counts are used where available; otherwise the
 same conservative estimate is used for actual/estimated comparison.
+
+For local Ollama models, API cost fields remain `0`; token counts are still shown. For external
+OpenAI models, `estimated_cost_usd` and `estimated_cost_eur` are calculated from the configured
+per-million-token price table. EUR uses the configured `usd_to_eur_rate`.
 
 Start-job response:
 
@@ -284,18 +296,21 @@ Response:
   "model": "qwen3:14b",
   "cost_estimate": {
     "llm_call_count": 3,
-    "estimated_input_tokens": 10000,
+    "estimated_input_tokens": 38907,
     "estimated_output_tokens": 3600,
-    "estimated_cost_usd": 0.0
+    "estimated_total_tokens": 42507,
+    "estimated_cost_usd": 0.0,
+    "estimated_cost_eur": 0.0
   },
   "preflight": {},
   "token_budget": {
-    "preflight_estimated_total_tokens": 14814,
+    "preflight_estimated_total_tokens": 42507,
     "tolerance_percent": 10,
-    "allowed_total_tokens": 16296,
+    "allowed_total_tokens": 46758,
     "actual_total_tokens": 12000,
-    "difference_percent": -18.99,
+    "difference_percent": -71.77,
     "within_budget": true,
+    "actual_cost_estimate": {},
     "calls": []
   },
   "steps": [

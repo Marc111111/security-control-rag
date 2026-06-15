@@ -193,7 +193,9 @@ Example request shape:
   "model": {
     "provider": "ollama",
     "model": "qwen3:14b",
-    "max_estimated_input_tokens": 24000
+    "max_estimated_input_tokens": 60000,
+    "enforce_token_budget": true,
+    "token_budget_tolerance_percent": 10
   },
   "top_k": 8,
   "debug": true
@@ -207,6 +209,9 @@ stream responses and use `keep_alive=0s` to avoid holding the generator after a 
 completed job response includes `steps` for the visual workflow, `cost_estimate`, `final_result`,
 and `run_path`. Saved runs can be compared through
 `GET /api/workflows/complete-assessment/runs`.
+For the complete workflow, token estimates are cumulative for one full run across all planned LLM
+calls and are deliberately conservative. Local Ollama runs show token counts with zero API price;
+external OpenAI runs include estimated USD and EUR cost from the configured model price table.
 
 For a no-database packet sample, the screen calls:
 

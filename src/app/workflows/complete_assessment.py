@@ -17,7 +17,7 @@ from app.assessment.schemas import (
     FoundationAssessmentPacket,
     FoundationSummaryDraft,
 )
-from app.assessment.token_estimator import MODEL_PRICES_PER_MILLION
+from app.assessment.token_estimator import MODEL_PRICES_PER_MILLION, USD_TO_EUR_RATE
 from app.generation.clients import ChatModel, OpenAIChatClient
 from app.pipeline import GraphRagPipeline
 from app.schemas import GraphRagAnswer
@@ -31,7 +31,7 @@ class ModelSelection(BaseModel):
     openai_api_key: str | None = Field(default=None, exclude=True)
     confirm_external_call: bool = False
     estimated_output_tokens: int = Field(default=1_200, ge=200, le=6_000)
-    max_estimated_input_tokens: int = Field(default=24_000, ge=500, le=60_000)
+    max_estimated_input_tokens: int = Field(default=60_000, ge=500, le=120_000)
     enforce_token_budget: bool = True
     token_budget_tolerance_percent: int = Field(default=10, ge=0, le=100)
 
@@ -175,6 +175,13 @@ class TokenUsageTracker:
             "difference_tokens": difference,
             "difference_percent": difference_percent,
             "within_budget": self.actual_total_tokens <= self.allowed_total_tokens,
+            "actual_cost_estimate": _token_cost_estimate(
+                provider=self.provider,
+                model=self.model,
+                input_tokens=self.actual_input_tokens,
+                output_tokens=self.actual_output_tokens,
+                estimate_basis="actual_tokens_reported_or_measured_for_this_run",
+            ),
             "usage_source_note": (
                 "Provider-reported token counts are used when available. "
                 "Calls without provider counts use the same conservative rough estimate "
@@ -409,11 +416,7 @@ class CompleteAssessmentWorkflow:
             )
 
             _raise_if_cancelled(cancel_event)
-            cost_estimate = _estimate_complete_workflow_cost(
-                sanitized,
-                request.model,
-                compact_risk_evidence,
-            )
+            cost_estimate = _cost_estimate_from_preflight(request.model, preflight)
             paragraph_messages = _paragraph_prompt(
                 sanitized,
                 findings,
@@ -529,9 +532,15 @@ def estimate_complete_assessment_preflight(
         json.dumps(sanitized.model_dump(mode="json"), ensure_ascii=True)
     )
     finding_tokens = _rough_tokens(json.dumps(_findings_dump(findings), ensure_ascii=True))
-    llm_call_count = max(1, len(retrieval_input)) + 1
-    estimated_retrieval_context_tokens = len(retrieval_input) * request.top_k * 650
-    estimated_input_tokens = packet_tokens + finding_tokens + estimated_retrieval_context_tokens
+    risk_question_count = len(retrieval_input)
+    llm_call_count = max(1, risk_question_count) + 1
+    input_breakdown = _conservative_preflight_input_breakdown(
+        packet_tokens=packet_tokens,
+        finding_tokens=finding_tokens,
+        risk_question_count=risk_question_count,
+        top_k=request.top_k,
+    )
+    estimated_input_tokens = input_breakdown["estimated_input_tokens"]
     estimated_output_tokens = request.model.estimated_output_tokens * llm_call_count
     estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
     allowed_total_tokens = math.ceil(
@@ -539,11 +548,13 @@ def estimate_complete_assessment_preflight(
         * (1 + (request.model.token_budget_tolerance_percent / 100))
     )
     price = MODEL_PRICES_PER_MILLION.get(request.model.model)
-    estimated_cost = 0.0
-    if request.model.provider == "openai" and price is not None:
-        input_cost = estimated_input_tokens * price["input"] / 1_000_000
-        output_cost = estimated_output_tokens * price["output"] / 1_000_000
-        estimated_cost = round(input_cost + output_cost, 6)
+    cost_estimate = _token_cost_estimate(
+        provider=request.model.provider,
+        model=request.model.model,
+        input_tokens=estimated_input_tokens,
+        output_tokens=estimated_output_tokens,
+        estimate_basis="conservative_preflight_for_one_complete_workflow_run",
+    )
     return {
         "adapter": input_source.adapter,
         "assessment_id": packet.assessment_id,
@@ -557,15 +568,21 @@ def estimate_complete_assessment_preflight(
         "estimated_input_tokens": estimated_input_tokens,
         "estimated_output_tokens": estimated_output_tokens,
         "estimated_total_tokens": estimated_total_tokens,
+        "estimate_policy": "conservative_workflow_reserve",
+        "estimate_breakdown": input_breakdown,
         "max_estimated_input_tokens": request.model.max_estimated_input_tokens,
         "enforce_token_budget": request.model.enforce_token_budget,
         "token_budget_tolerance_percent": request.model.token_budget_tolerance_percent,
         "allowed_total_tokens": allowed_total_tokens,
-        "estimated_cost_usd": estimated_cost,
+        "estimated_cost_usd": cost_estimate["estimated_cost_usd"],
+        "estimated_cost_eur": cost_estimate["estimated_cost_eur"],
+        "usd_to_eur_rate": cost_estimate["usd_to_eur_rate"],
+        "price_per_million_tokens": price if request.model.provider == "openai" else None,
+        "pricing_note": cost_estimate["pricing_note"],
         "will_exceed_guard": estimated_input_tokens > request.model.max_estimated_input_tokens,
         "note": (
             "Preflight does not query Qdrant, BM25, Neo4j, Ollama, or OpenAI. "
-            "It estimates the workflow before GPU/API work starts."
+            "It reserves conservatively for all planned model calls before GPU/API work starts."
         ),
     }
 
@@ -714,38 +731,101 @@ def _paragraph_prompt(
     ]
 
 
-def _estimate_complete_workflow_cost(
-    packet: FoundationAssessmentPacket,
+def _cost_estimate_from_preflight(
     model: ModelSelection,
-    rag_answers: list[dict[str, Any]],
+    preflight: dict[str, Any],
 ) -> dict[str, Any]:
-    input_payload = json.dumps(
-        {"assessment": packet.model_dump(mode="json"), "retrieved_evidence": rag_answers},
-        ensure_ascii=True,
+    cost = _token_cost_estimate(
+        provider=model.provider,
+        model=model.model,
+        input_tokens=int(preflight["estimated_input_tokens"]),
+        output_tokens=int(preflight["estimated_output_tokens"]),
+        estimate_basis="conservative_preflight_for_one_complete_workflow_run",
     )
-    estimated_input_tokens = _rough_tokens(input_payload)
-    llm_call_count = max(1, len(rag_answers)) + 1
-    estimated_output_tokens = model.estimated_output_tokens * llm_call_count
-    price = MODEL_PRICES_PER_MILLION.get(model.model)
-    if model.provider == "openai" and price is not None:
-        input_cost = estimated_input_tokens * price["input"] / 1_000_000
-        output_cost = estimated_output_tokens * price["output"] / 1_000_000
-        estimated_cost = round(input_cost + output_cost, 6)
-        pricing_note = (
-            "Estimated from configured OpenAI per-million prices for the full workflow."
-        )
-    else:
-        estimated_cost = 0.0
-        pricing_note = "Local Ollama workflow is estimated as $0 API cost."
     return {
         "model": model.model,
         "provider": model.provider,
-        "llm_call_count": llm_call_count,
+        "llm_call_count": preflight["llm_call_count"],
+        "estimated_input_tokens": preflight["estimated_input_tokens"],
+        "estimated_output_tokens": preflight["estimated_output_tokens"],
+        "estimated_total_tokens": preflight["estimated_total_tokens"],
+        "estimate_policy": preflight["estimate_policy"],
+        "estimate_breakdown": preflight["estimate_breakdown"],
+        **cost,
+    }
+
+
+def _token_cost_estimate(
+    *,
+    provider: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    estimate_basis: str,
+) -> dict[str, Any]:
+    price = MODEL_PRICES_PER_MILLION.get(model)
+    if provider != "openai" or price is None:
+        return {
+            "estimated_cost_usd": 0.0,
+            "estimated_cost_eur": 0.0,
+            "usd_to_eur_rate": USD_TO_EUR_RATE,
+            "estimate_basis": estimate_basis,
+            "pricing_note": (
+                "Internal/local model run: token use is tracked, but API price is $0."
+            ),
+        }
+    input_cost = input_tokens * price["input"] / 1_000_000
+    output_cost = output_tokens * price["output"] / 1_000_000
+    estimated_cost_usd = round(input_cost + output_cost, 6)
+    return {
+        "estimated_cost_usd": estimated_cost_usd,
+        "estimated_cost_eur": round(estimated_cost_usd * USD_TO_EUR_RATE, 6),
+        "usd_to_eur_rate": USD_TO_EUR_RATE,
+        "estimate_basis": estimate_basis,
+        "pricing_note": (
+            "External OpenAI estimate from configured per-million input/output token prices. "
+            "EUR uses the configured USD_TO_EUR_RATE."
+        ),
+    }
+
+
+def _conservative_preflight_input_breakdown(
+    *,
+    packet_tokens: int,
+    finding_tokens: int,
+    risk_question_count: int,
+    top_k: int,
+) -> dict[str, int | float]:
+    risk_call_count = max(1, risk_question_count)
+    prompt_instruction_reserve = risk_call_count * 1_600
+    retrieved_chunk_reserve = risk_call_count * top_k * 900
+    graph_context_reserve = risk_call_count * 1_000
+    final_report_prompt_reserve = packet_tokens + finding_tokens + 1_500
+    final_report_evidence_reserve = risk_question_count * 2_500
+    subtotal = (
+        packet_tokens
+        + finding_tokens
+        + prompt_instruction_reserve
+        + retrieved_chunk_reserve
+        + graph_context_reserve
+        + final_report_prompt_reserve
+        + final_report_evidence_reserve
+    )
+    safety_multiplier = 1.35
+    estimated_input_tokens = math.ceil(subtotal * safety_multiplier)
+    return {
+        "packet_tokens": packet_tokens,
+        "finding_tokens": finding_tokens,
+        "risk_call_count": risk_call_count,
+        "top_k": top_k,
+        "prompt_instruction_reserve": prompt_instruction_reserve,
+        "retrieved_chunk_reserve": retrieved_chunk_reserve,
+        "graph_context_reserve": graph_context_reserve,
+        "final_report_prompt_reserve": final_report_prompt_reserve,
+        "final_report_evidence_reserve": final_report_evidence_reserve,
+        "subtotal_before_safety_margin": subtotal,
+        "safety_multiplier": safety_multiplier,
         "estimated_input_tokens": estimated_input_tokens,
-        "estimated_output_tokens": estimated_output_tokens,
-        "estimated_total_tokens": estimated_input_tokens + estimated_output_tokens,
-        "estimated_cost_usd": estimated_cost,
-        "pricing_note": pricing_note,
     }
 
 

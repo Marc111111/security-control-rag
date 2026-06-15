@@ -14,6 +14,8 @@ MODEL_PRICES_PER_MILLION = {
     "gpt-4.1-mini": {"input": 0.40, "output": 1.60},
 }
 
+USD_TO_EUR_RATE = 0.92
+
 
 @dataclass(frozen=True)
 class TokenEstimate:
@@ -22,6 +24,8 @@ class TokenEstimate:
     estimated_output_tokens: int
     estimated_total_tokens: int
     estimated_cost_usd: float
+    estimated_cost_eur: float
+    usd_to_eur_rate: float
     prompt_characters: int
     pricing_note: str
 
@@ -32,6 +36,8 @@ class TokenEstimate:
             "estimated_output_tokens": self.estimated_output_tokens,
             "estimated_total_tokens": self.estimated_total_tokens,
             "estimated_cost_usd": self.estimated_cost_usd,
+            "estimated_cost_eur": self.estimated_cost_eur,
+            "usd_to_eur_rate": self.usd_to_eur_rate,
             "prompt_characters": self.prompt_characters,
             "pricing_note": self.pricing_note,
         }
@@ -60,12 +66,15 @@ def estimate_foundation_summary_tokens(
         input_cost = input_tokens * price["input"] / 1_000_000
         output_cost = estimated_output_tokens * price["output"] / 1_000_000
         pricing_note = "Estimated from configured per-million input/output token prices."
+    estimated_cost_usd = round(input_cost + output_cost, 6)
     return TokenEstimate(
         model=model,
         estimated_input_tokens=input_tokens,
         estimated_output_tokens=estimated_output_tokens,
         estimated_total_tokens=input_tokens + estimated_output_tokens,
-        estimated_cost_usd=round(input_cost + output_cost, 6),
+        estimated_cost_usd=estimated_cost_usd,
+        estimated_cost_eur=round(estimated_cost_usd * USD_TO_EUR_RATE, 6),
+        usd_to_eur_rate=USD_TO_EUR_RATE,
         prompt_characters=len(prompt_text),
         pricing_note=pricing_note,
     )

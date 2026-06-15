@@ -16,6 +16,7 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "OpenAI API key for this request only" in response.text
     assert "Token guard tolerance (+/- %)" in response.text
     assert "Enforce token guard" in response.text
+    assert "Est. one-run price" in response.text
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text
@@ -65,6 +66,8 @@ def test_token_estimate_is_small_for_sample_packet() -> None:
     body = response.json()
     assert body["estimated_input_tokens"] < 6_000
     assert body["estimated_cost_usd"] < 0.02
+    assert body["estimated_cost_eur"] < 0.02
+    assert body["usd_to_eur_rate"] > 0
     assert "pricing_note" in body
 
 

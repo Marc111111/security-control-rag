@@ -153,6 +153,9 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     assert body["final_result"]["assessment_id"] == packet["assessment_id"]
     assert body["final_result"]["risk_evaluations"]
     assert body["cost_estimate"]["llm_call_count"] >= 2
+    assert body["cost_estimate"]["estimate_policy"] == "conservative_workflow_reserve"
+    assert body["cost_estimate"]["estimated_cost_usd"] == 0
+    assert body["cost_estimate"]["estimated_cost_eur"] == 0
     assert body["preflight"]["token_budget_tolerance_percent"] == 10
     assert body["token_budget"]["preflight_estimated_total_tokens"] == body["preflight"][
         "estimated_total_tokens"
@@ -230,9 +233,49 @@ def test_complete_assessment_preflight_endpoint_estimates_before_model_calls(
     body = response.json()
     assert body["weakness_count"] == 2
     assert body["llm_call_count"] == 3
+    assert body["estimate_policy"] == "conservative_workflow_reserve"
+    assert body["estimated_input_tokens"] > 24_000
+    assert body["max_estimated_input_tokens"] == 60_000
+    assert body["will_exceed_guard"] is False
+    assert body["estimate_breakdown"]["retrieved_chunk_reserve"] > 0
     assert body["token_budget_tolerance_percent"] == 10
     assert body["allowed_total_tokens"] == math.ceil(body["estimated_total_tokens"] * 1.1)
+    assert body["estimated_cost_usd"] == 0
+    assert body["estimated_cost_eur"] == 0
     assert body["note"].startswith("Preflight does not query")
+
+
+def test_complete_assessment_openai_preflight_returns_usd_and_eur_cost(
+    tmp_path: Path,
+) -> None:
+    pipeline = _memory_pipeline(tmp_path, WorkflowFakeChatModel())
+    client = TestClient(create_app(pipeline))
+
+    response = client.post(
+        "/api/workflows/complete-assessment/preflight",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+                "confirm_external_call": True,
+            },
+            "top_k": 8,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["estimated_total_tokens"] == (
+        body["estimated_input_tokens"] + body["estimated_output_tokens"]
+    )
+    assert body["estimated_cost_usd"] > 0
+    assert body["estimated_cost_eur"] > 0
+    assert body["usd_to_eur_rate"] > 0
+    assert body["price_per_million_tokens"]["input"] > 0
 
 
 def test_complete_assessment_token_budget_can_stop_oversized_model_output(
