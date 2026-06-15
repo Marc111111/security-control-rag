@@ -272,7 +272,7 @@ jobs show ETA based on median duration from previous completed saved runs. If no
 history exists, show that honestly.
 
 Keep the Configuration panel dense enough that all controls and the full run estimate are visible in
-the top-left frame without hidden clipping, but do not make the estimate unreadably tiny. Use
-readable estimate fields: `Model`, `USD`, `Tokens`, `Guard cap`, and `Calls`. The `Tokens` value
-should show input, output, and total tokens in one understandable sentence. Do not show a redundant
-`Status OK` chip.
+the top-left frame without hidden clipping, but do not make the estimate unreadably tiny. The run
+estimate must be one readable line with exactly these business items: `Model`, `Expected in/out`
+(input and output token estimates), `Hard cap`, and `Total cost` in USD. Do not show mini cards, total-token
+clutter, LLM call count, EUR, or a redundant `Status OK` chip in that top-frame estimate.

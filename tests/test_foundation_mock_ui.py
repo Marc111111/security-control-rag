@@ -18,9 +18,10 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Token guard +/- %" in response.text
     assert "Enforce token guard" in response.text
     assert "Est. one-run price" in response.text
-    assert 'estimateChip("USD"' in response.text
-    assert '"Tokens"' in response.text
-    assert "Guard cap" in response.text
+    assert "estimate-line" in response.text
+    assert "Expected in/out" in response.text
+    assert "Hard cap" in response.text
+    assert "Total cost" in response.text
     assert "ETA" in response.text
     assert "No run history yet" in response.text
     assert "historicalDurationEstimate" in response.text

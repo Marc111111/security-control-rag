@@ -179,9 +179,10 @@ http://127.0.0.1:8000/mock/foundation
   - The Configuration panel must show the whole estimate block inside the top-left frame without
     clipping. On 2026-06-15 the live page was verified after pressing `Estimate cost`: estimate
     bottom `458px`, optional DB form top `477px`, panel scroll height equaled client height.
-    Keep estimate content visible but readable. Use labels `Model`, `USD`, `Tokens`, `Guard cap`,
-    and `Calls`; the `Tokens` value should include input, output, and total tokens in one sentence.
-    Do not show a redundant `Status OK` estimate chip or tiny unreadable boxes.
+    Keep estimate content visible, readable, and on one line. It must show exactly `Model`,
+    `Expected in/out` with input and output token estimates, `Hard cap`, and `Total cost` in USD.
+    Do not show mini cards, total-token clutter, LLM call count, EUR, or a redundant `Status OK`
+    chip in that top-frame estimate.
 - Commit/push/PR update: record compact Configuration panel changes in git and PR comments.
 
 ## Known Risks And Improvements
