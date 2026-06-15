@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,11 @@ class SlowWorkflowFakeChatModel(WorkflowFakeChatModel):
         return super().chat(messages)
 
 
+class HugeWorkflowFakeChatModel(WorkflowFakeChatModel):
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        return "x" * 120_000
+
+
 def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     tmp_path: Path,
     monkeypatch: Any,
@@ -117,14 +123,45 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     ]
     assert any(name.startswith("Plan searches for ") for name in step_names)
     assert any(name.startswith("Search standards evidence for ") for name in step_names)
+    assert any(name.startswith("Prepare model prompt for ") for name in step_names)
     assert any(name.startswith("Ask model to write risk answer for ") for name in step_names)
+    assert any(name.startswith("Store risk answer for ") for name in step_names)
     assert step_names[-1] == "Prepare final result for the application"
     assert body["steps"][1]["input"] == body["steps"][0]["output"]
     assert body["steps"][2]["input"] == body["steps"][1]["output"]
     assert "risk_questions" in body["steps"][2]["output"]
+    selected_index = next(
+        index
+        for index, name in enumerate(step_names)
+        if name.startswith("Select next weak answer to evaluate")
+    )
+    assert body["steps"][selected_index + 1]["input"] == body["steps"][selected_index][
+        "output"
+    ]
+    assert body["steps"][selected_index + 2]["input"] == body["steps"][selected_index + 1][
+        "output"
+    ]
+    assert body["steps"][selected_index + 3]["input"] == body["steps"][selected_index + 2][
+        "output"
+    ]
+    assert body["steps"][selected_index + 4]["input"] == body["steps"][selected_index + 3][
+        "output"
+    ]
+    assert body["steps"][selected_index + 5]["input"] == body["steps"][selected_index + 4][
+        "output"
+    ]
     assert body["final_result"]["assessment_id"] == packet["assessment_id"]
     assert body["final_result"]["risk_evaluations"]
     assert body["cost_estimate"]["llm_call_count"] >= 2
+    assert body["preflight"]["token_budget_tolerance_percent"] == 10
+    assert body["token_budget"]["preflight_estimated_total_tokens"] == body["preflight"][
+        "estimated_total_tokens"
+    ]
+    assert body["token_budget"]["allowed_total_tokens"] == body["preflight"][
+        "allowed_total_tokens"
+    ]
+    assert body["token_budget"]["calls"]
+    assert body["token_budget"]["calls"][0]["source"] == "rough_estimate"
     assert Path(body["run_path"]).exists()
 
     runs_response = client.get("/api/workflows/complete-assessment/runs")
@@ -193,7 +230,42 @@ def test_complete_assessment_preflight_endpoint_estimates_before_model_calls(
     body = response.json()
     assert body["weakness_count"] == 2
     assert body["llm_call_count"] == 3
+    assert body["token_budget_tolerance_percent"] == 10
+    assert body["allowed_total_tokens"] == math.ceil(body["estimated_total_tokens"] * 1.1)
     assert body["note"].startswith("Preflight does not query")
+
+
+def test_complete_assessment_token_budget_can_stop_oversized_model_output(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        complete_assessment,
+        "_chat_model",
+        lambda *args, **kwargs: HugeWorkflowFakeChatModel(),
+    )
+    pipeline = _memory_pipeline(tmp_path, HugeWorkflowFakeChatModel())
+    pipeline.ingest(_standards_fixture(tmp_path), chunk_size=300)
+    client = TestClient(create_app(pipeline))
+
+    response = client.post(
+        "/api/workflows/complete-assessment/run",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {
+                "provider": "ollama",
+                "model": "qwen3:14b",
+                "token_budget_tolerance_percent": 0,
+            },
+            "top_k": 5,
+        },
+    )
+
+    assert response.status_code == 400
+    assert "Token budget guard" in response.json()["detail"]
 
 
 def test_complete_assessment_job_endpoint_runs_to_completion(

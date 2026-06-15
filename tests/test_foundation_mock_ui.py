@@ -14,6 +14,8 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "gpt-5.4-mini" in response.text
     assert "qwen3:14b" in response.text
     assert "OpenAI API key for this request only" in response.text
+    assert "Token guard tolerance (+/- %)" in response.text
+    assert "Enforce token guard" in response.text
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text
@@ -21,6 +23,8 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "business context manifest" in response.text
     assert "Apply form to JSON" in response.text
     assert "Save scenario" in response.text
+    assert "openPreview" in response.text
+    assert "Expand" in response.text
 
 
 def test_foundation_business_context_manifest_is_served() -> None:

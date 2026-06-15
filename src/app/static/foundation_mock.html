@@ -320,11 +320,23 @@
         overflow: hidden;
       }
       details.preview summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
         cursor: pointer;
         padding: 8px 10px;
         color: var(--muted);
         font-size: 12px;
         font-weight: 800;
+      }
+      .preview-expand {
+        border-color: #b9c9c4;
+        background: #fff;
+        color: #0b5f59;
+        padding: 4px 7px;
+        border-radius: 5px;
+        font-size: 11px;
       }
       pre {
         margin: 0;
@@ -371,9 +383,17 @@
                 <label for="apiKey">OpenAI API key for this request only</label>
                 <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
               </div>
+              <div>
+                <label for="tokenTolerance">Token guard tolerance (+/- %)</label>
+                <input id="tokenTolerance" type="number" min="0" max="100" step="1" value="10" />
+              </div>
               <label class="check">
                 <input type="checkbox" id="confirmExternal" />
                 Allow external OpenAI call
+              </label>
+              <label class="check">
+                <input type="checkbox" id="enforceTokenBudget" checked />
+                Enforce token guard
               </label>
             </div>
           </div>
@@ -433,6 +453,8 @@
       const modelEl = document.querySelector("#model");
       const keyEl = document.querySelector("#apiKey");
       const confirmEl = document.querySelector("#confirmExternal");
+      const tokenToleranceEl = document.querySelector("#tokenTolerance");
+      const enforceTokenBudgetEl = document.querySelector("#enforceTokenBudget");
       const packetEl = document.querySelector("#packet");
       const workflowEl = document.querySelector("#workflow");
       const finalEl = document.querySelector("#finalResult");
@@ -445,6 +467,8 @@
       let currentJobId = null;
       let pollTimer = null;
       let lastPreflight = null;
+      let previewCounter = 0;
+      const previewStore = new Map();
 
       function configureModels() {
         modelEl.innerHTML = models[providerEl.value].map((model) => `<option value="${model}">${model}</option>`).join("");
@@ -604,6 +628,8 @@
           confirm_external_call: confirmEl.checked,
           estimated_output_tokens: 1200,
           max_estimated_input_tokens: 24000,
+          enforce_token_budget: enforceTokenBudgetEl.checked,
+          token_budget_tolerance_percent: Number(tokenToleranceEl.value || 10),
         };
         if (providerEl.value === "openai" && keyEl.value.trim()) model.openai_api_key = keyEl.value.trim();
         return {
@@ -701,6 +727,8 @@
           metric("Provider", data.provider),
           metric("Model", data.model),
           metric("Est. price", `$${data.cost_estimate?.estimated_cost_usd ?? 0}`),
+          metric("Tokens actual/est.", tokenComparisonLabel(data.token_budget)),
+          metric("Token cap", data.token_budget?.allowed_total_tokens ?? "n/a"),
         ].join("");
         setWorkflowHtml(data.steps.map((step, index) => renderStep(step, index)).join(""));
         finalEl.textContent = JSON.stringify(data.final_result, null, 2);
@@ -711,6 +739,8 @@
         metricsEl.innerHTML = [
           metric("Preflight", data.will_exceed_guard ? "Blocked" : "OK"),
           metric("Input tokens", data.estimated_input_tokens),
+          metric("Total estimate", data.estimated_total_tokens),
+          metric("Token cap", data.allowed_total_tokens),
           metric("LLM calls", data.llm_call_count),
           metric("Est. price", `$${data.estimated_cost_usd ?? 0}`),
         ].join("");
@@ -721,7 +751,18 @@
         const description = "This checks the likely size and cost of the workflow before any AI model is called.";
         return `<details class="step" open>
           ${renderStepSummary("0", "Preflight estimate", description, "Python deterministic workflow")}
-          <div class="step-body">${preview("Output", data)}</div>
+          <div class="step-body">
+            <div class="triptych">
+              ${preview("Input", {
+                provider: data.provider,
+                model: data.model,
+                tolerance_percent: data.token_budget_tolerance_percent,
+                enforce_token_budget: data.enforce_token_budget
+              })}
+              ${preview("Process", "We estimate the full workflow before any model is called. The token cap is the estimate plus the configured tolerance. If a later prompt would push the run above that cap, the workflow stops before sending the next model call.")}
+              ${preview("Output", data)}
+            </div>
+          </div>
         </details>`;
       }
 
@@ -732,6 +773,7 @@
           metric("Status", job.status),
           metric("Provider", job.provider),
           metric("Model", job.model),
+          metric("Token cap", job.preflight?.allowed_total_tokens ?? "n/a"),
           metric("Current step", job.current_step || "Starting"),
         ].join("");
         if (job.status !== "completed") {
@@ -830,17 +872,59 @@
       }
 
       function preview(title, value) {
-        const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        const rawText = value === undefined
+          ? "[No output returned by this step]"
+          : typeof value === "string"
+            ? value
+            : JSON.stringify(value, null, 2);
+        const text = rawText || "[No output returned by this step]";
+        const previewId = `preview-${++previewCounter}`;
+        previewStore.set(previewId, { title, text });
+        const summary = `<summary><span>${escapeHtml(title)}</span><button class="preview-expand" type="button" onclick="openPreview('${previewId}', event)">Expand</button></summary>`;
         if (text.length > 9000) {
-          const blob = new Blob([text], { type: "text/plain" });
-          const url = URL.createObjectURL(blob);
-          return `<details class="preview"><summary>${escapeHtml(title)}</summary><a class="button-link" href="${url}" target="_blank" rel="noreferrer">Open full preview</a><pre>Large output (${text.length} chars)</pre></details>`;
+          return `<details class="preview">${summary}<pre>Large output (${text.length} chars). Use Expand to inspect it in a separate window.</pre></details>`;
         }
-        return `<details class="preview" open><summary>${escapeHtml(title)}</summary><pre>${escapeHtml(text)}</pre></details>`;
+        return `<details class="preview" open>${summary}<pre>${escapeHtml(text)}</pre></details>`;
+      }
+
+      function openPreview(previewId, event) {
+        if (event) event.stopPropagation();
+        const item = previewStore.get(previewId);
+        if (!item) return;
+        const previewWindow = window.open("", "_blank", "width=1180,height=860");
+        if (!previewWindow) return;
+        previewWindow.document.write(`<!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <title>${escapeHtml(item.title)}</title>
+              <style>
+                body { margin: 0; color: #1d2730; background: #f6f7f4; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+                header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid #d8ded6; background: #fbfcfa; }
+                h1 { margin: 0; font-size: 16px; }
+                button { border: 1px solid #0f766e; background: #0f766e; color: #fff; border-radius: 6px; padding: 8px 12px; font-weight: 800; cursor: pointer; }
+                pre { margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+              </style>
+            </head>
+            <body>
+              <header><h1>${escapeHtml(item.title)}</h1><button onclick="window.close()">Close</button></header>
+              <pre>${escapeHtml(item.text)}</pre>
+            </body>
+          </html>`);
+        previewWindow.document.close();
       }
 
       function metric(label, value) {
         return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+      }
+
+      function tokenComparisonLabel(tokenBudget) {
+        if (!tokenBudget) return "n/a";
+        const actual = tokenBudget.actual_total_tokens ?? 0;
+        const estimate = tokenBudget.preflight_estimated_total_tokens ?? 0;
+        const diff = tokenBudget.difference_percent ?? 0;
+        const sign = diff > 0 ? "+" : "";
+        return `${actual} / ${estimate} (${sign}${diff}%)`;
       }
 
       function setWorkflowHtml(html) {

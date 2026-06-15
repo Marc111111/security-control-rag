@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -31,6 +32,8 @@ class ModelSelection(BaseModel):
     confirm_external_call: bool = False
     estimated_output_tokens: int = Field(default=1_200, ge=200, le=6_000)
     max_estimated_input_tokens: int = Field(default=24_000, ge=500, le=60_000)
+    enforce_token_budget: bool = True
+    token_budget_tolerance_percent: int = Field(default=10, ge=0, le=100)
 
 
 class AssessmentInputSource(BaseModel):
@@ -72,6 +75,116 @@ class WorkflowStep:
         }
 
 
+@dataclass
+class TokenUsageTracker:
+    preflight_estimated_total_tokens: int
+    tolerance_percent: int
+    provider: str
+    model: str
+    enforced: bool = True
+    calls: list[dict[str, Any]] | None = None
+    actual_input_tokens: int = 0
+    actual_output_tokens: int = 0
+    estimated_fallback_calls: int = 0
+
+    @property
+    def allowed_total_tokens(self) -> int:
+        return math.ceil(
+            self.preflight_estimated_total_tokens
+            * (1 + (self.tolerance_percent / 100))
+        )
+
+    @property
+    def actual_total_tokens(self) -> int:
+        return self.actual_input_tokens + self.actual_output_tokens
+
+    def assert_can_send(self, call_name: str, estimated_input_tokens: int) -> None:
+        if not self.enforced:
+            return
+        predicted_total = self.actual_total_tokens + estimated_input_tokens
+        if predicted_total > self.allowed_total_tokens:
+            raise ValueError(
+                "Token budget guard blocked a model call before sending it. "
+                f"Call '{call_name}' would bring the run to about {predicted_total} "
+                f"tokens, above the allowed {self.allowed_total_tokens}."
+            )
+
+    def record_call(
+        self,
+        *,
+        call_name: str,
+        messages: list[dict[str, str]],
+        response_text: str,
+        chat_model: object,
+    ) -> dict[str, Any]:
+        estimated_input = _rough_tokens(json.dumps(messages, ensure_ascii=True))
+        estimated_output = _rough_tokens(response_text)
+        usage = _model_usage(chat_model)
+        actual_input = usage.get("input_tokens") if usage else estimated_input
+        actual_output = usage.get("output_tokens") if usage else estimated_output
+        if not isinstance(actual_input, int):
+            actual_input = estimated_input
+        if not isinstance(actual_output, int):
+            actual_output = estimated_output
+        if usage is None:
+            self.estimated_fallback_calls += 1
+        self.actual_input_tokens += actual_input
+        self.actual_output_tokens += actual_output
+        record = {
+            "call_name": call_name,
+            "provider": self.provider,
+            "model": self.model,
+            "estimated_input_tokens": estimated_input,
+            "estimated_output_tokens": estimated_output,
+            "actual_input_tokens": actual_input,
+            "actual_output_tokens": actual_output,
+            "actual_total_tokens": actual_input + actual_output,
+            "source": "provider_reported" if usage is not None else "rough_estimate",
+            "running_total_tokens": self.actual_total_tokens,
+            "allowed_total_tokens": self.allowed_total_tokens,
+            "within_budget_after_call": self.actual_total_tokens <= self.allowed_total_tokens,
+        }
+        if self.calls is None:
+            self.calls = []
+        self.calls.append(record)
+        if self.enforced and self.actual_total_tokens > self.allowed_total_tokens:
+            raise ValueError(
+                "Token budget guard stopped the workflow after a model call. "
+                f"Actual usage is {self.actual_total_tokens} tokens, above the "
+                f"allowed {self.allowed_total_tokens}."
+            )
+        return record
+
+    def as_dict(self) -> dict[str, Any]:
+        difference = self.actual_total_tokens - self.preflight_estimated_total_tokens
+        difference_percent = (
+            round(difference / self.preflight_estimated_total_tokens * 100, 2)
+            if self.preflight_estimated_total_tokens
+            else 0
+        )
+        return {
+            "provider": self.provider,
+            "model": self.model,
+            "enforced": self.enforced,
+            "preflight_estimated_total_tokens": self.preflight_estimated_total_tokens,
+            "tolerance_percent": self.tolerance_percent,
+            "allowed_total_tokens": self.allowed_total_tokens,
+            "actual_input_tokens": self.actual_input_tokens,
+            "actual_output_tokens": self.actual_output_tokens,
+            "actual_total_tokens": self.actual_total_tokens,
+            "difference_tokens": difference,
+            "difference_percent": difference_percent,
+            "within_budget": self.actual_total_tokens <= self.allowed_total_tokens,
+            "usage_source_note": (
+                "Provider-reported token counts are used when available. "
+                "Calls without provider counts use the same conservative rough estimate "
+                "as preflight."
+            ),
+            "estimated_fallback_calls": self.estimated_fallback_calls,
+            "calls": self.calls or [],
+        }
+
+
 class CompleteAssessmentWorkflow:
     def __init__(
         self,
@@ -91,9 +204,17 @@ class CompleteAssessmentWorkflow:
     ) -> dict[str, Any]:
         _validate_model_selection(request.model)
         packet, input_source = _resolve_input_source(request)
+        preflight = estimate_complete_assessment_preflight(request)
         created_at = datetime.now(UTC).isoformat()
         run_id = f"run-{created_at.replace(':', '').replace('.', '')}-{uuid4().hex[:8]}"
         steps: list[WorkflowStep] = []
+        token_tracker = TokenUsageTracker(
+            preflight_estimated_total_tokens=preflight["estimated_total_tokens"],
+            tolerance_percent=request.model.token_budget_tolerance_percent,
+            provider=request.model.provider,
+            model=request.model.model,
+            enforced=request.model.enforce_token_budget,
+        )
         selected_chat_model = _chat_model(
             request.model,
             self.pipeline.settings.ollama_base_url,
@@ -107,6 +228,28 @@ class CompleteAssessmentWorkflow:
             steps.append(step)
             if progress_callback is not None:
                 progress_callback(step)
+
+        def record_model_call(
+            call_name: str,
+            messages: list[dict[str, str]],
+            response_text: str,
+            chat_model: object,
+        ) -> dict[str, Any]:
+            return token_tracker.record_call(
+                call_name=call_name,
+                messages=messages,
+                response_text=response_text,
+                chat_model=chat_model,
+            )
+
+        def assert_model_call_budget(
+            call_name: str,
+            messages: list[dict[str, str]],
+        ) -> None:
+            token_tracker.assert_can_send(
+                call_name,
+                _rough_tokens(json.dumps(messages, ensure_ascii=True)),
+            )
 
         try:
             _raise_if_cancelled(cancel_event)
@@ -178,21 +321,72 @@ class CompleteAssessmentWorkflow:
                 )
             )
             rag_answers: list[GraphRagAnswer] = []
-            for item in retrieval_input:
+            risk_chain_output: dict[str, Any] = {"risk_questions": retrieval_input}
+            for item_index, item in enumerate(retrieval_input):
                 _raise_if_cancelled(cancel_event)
                 trace_label = f"{item['question_id']} / {item['context']['control']['control_id']}"
+                selection_output = {
+                    "selected_risk_question": item,
+                    "risk_answers_so_far": [_rag_answer_dump(answer) for answer in rag_answers],
+                    "remaining_risk_question_count": len(retrieval_input) - item_index - 1,
+                }
+                add_step(
+                    WorkflowStep(
+                        name=f"Select next weak answer to evaluate for {trace_label}",
+                        explanation=(
+                            "Chooses one weak questionnaire answer from the queue so it can be "
+                            "checked against the standards library."
+                        ),
+                        tool="Python deterministic workflow",
+                        input=risk_chain_output,
+                        process=(
+                            "The previous step output is the current work package. This step "
+                            "moves the workflow cursor to the next weak answer while keeping "
+                            "the risk answers already produced."
+                        ),
+                        output=selection_output,
+                    )
+                )
+                risk_chain_output = selection_output
                 answer, trace_steps = self.pipeline.query_with_trace(
                     item["retrieval_question"],
                     top_k=request.top_k,
                     debug=True,
-                    trace_input={"risk_question_from_previous_step": item},
+                    trace_input=selection_output,
                     trace_label=trace_label,
                     model_label=f"{request.model.provider}:{request.model.model}",
+                    token_usage_callback=record_model_call,
+                    token_budget_guard=assert_model_call_budget,
                 )
                 for trace_step in trace_steps:
                     _raise_if_cancelled(cancel_event)
                     add_step(WorkflowStep(**trace_step))
+                    risk_chain_output = trace_step["output"]
                 rag_answers.append(answer)
+                stored_answer_output = {
+                    "latest_risk_answer": _rag_answer_dump(answer),
+                    "risk_answers_so_far": [
+                        _rag_answer_dump(rag_answer) for rag_answer in rag_answers
+                    ],
+                    "remaining_risk_question_count": len(retrieval_input) - item_index - 1,
+                }
+                add_step(
+                    WorkflowStep(
+                        name=f"Store risk answer for {trace_label}",
+                        explanation=(
+                            "Keeps the risk answer so later steps can draft the final report "
+                            "from all evaluated weak answers."
+                        ),
+                        tool="Python deterministic workflow",
+                        input=risk_chain_output,
+                        process=(
+                            "We take the model answer from the previous step, store it in the "
+                            "workflow result list, and pass that accumulated list forward."
+                        ),
+                        output=stored_answer_output,
+                    )
+                )
+                risk_chain_output = stored_answer_output
             retrieval_output = [_rag_answer_dump(answer) for answer in rag_answers]
             compact_risk_evidence = _compact_rag_evidence(retrieval_output)
             rag_evidence_output = {"retrieved_risk_evidence": compact_risk_evidence}
@@ -204,7 +398,7 @@ class CompleteAssessmentWorkflow:
                         "report-writing step has one clean evidence package."
                     ),
                     tool="Python deterministic workflow",
-                    input={"risk_answer_outputs": retrieval_output},
+                    input=risk_chain_output,
                     process=(
                         "The previous steps produced one answer per weak control. Here we keep "
                         "the useful parts, trim oversized debug text, and prepare the evidence "
@@ -233,6 +427,10 @@ class CompleteAssessmentWorkflow:
                     "Paragraph prompt exceeds max_estimated_input_tokens "
                     f"({paragraph_input_tokens} > {request.model.max_estimated_input_tokens})"
                 )
+            token_tracker.assert_can_send(
+                "Report paragraph model call",
+                paragraph_input_tokens,
+            )
             paragraph_input = {
                 "evidence_package_from_previous_step": rag_evidence_output,
                 "messages_sent_to_model": paragraph_messages,
@@ -240,6 +438,12 @@ class CompleteAssessmentWorkflow:
             }
             _raise_if_cancelled(cancel_event)
             raw_paragraphs = selected_chat_model.chat(paragraph_messages)
+            paragraph_token_usage = record_model_call(
+                "Report paragraph model call",
+                paragraph_messages,
+                raw_paragraphs,
+                selected_chat_model,
+            )
             _raise_if_cancelled(cancel_event)
             paragraphs = _parse_paragraphs(raw_paragraphs, sanitized, findings)
             add_step(
@@ -259,6 +463,7 @@ class CompleteAssessmentWorkflow:
                     output={
                         "raw_model_output": raw_paragraphs,
                         "parsed_paragraphs": paragraphs,
+                        "token_usage": paragraph_token_usage,
                     },
                 )
             )
@@ -300,6 +505,8 @@ class CompleteAssessmentWorkflow:
                 "provider": request.model.provider,
                 "model": request.model.model,
                 "cost_estimate": cost_estimate,
+                "preflight": preflight,
+                "token_budget": token_tracker.as_dict(),
                 "steps": [step.as_dict() for step in steps],
                 "final_result": final_result,
             }
@@ -323,9 +530,14 @@ def estimate_complete_assessment_preflight(
     )
     finding_tokens = _rough_tokens(json.dumps(_findings_dump(findings), ensure_ascii=True))
     llm_call_count = max(1, len(retrieval_input)) + 1
-    estimated_retrieval_context_tokens = len(retrieval_input) * request.top_k * 180
+    estimated_retrieval_context_tokens = len(retrieval_input) * request.top_k * 650
     estimated_input_tokens = packet_tokens + finding_tokens + estimated_retrieval_context_tokens
     estimated_output_tokens = request.model.estimated_output_tokens * llm_call_count
+    estimated_total_tokens = estimated_input_tokens + estimated_output_tokens
+    allowed_total_tokens = math.ceil(
+        estimated_total_tokens
+        * (1 + (request.model.token_budget_tolerance_percent / 100))
+    )
     price = MODEL_PRICES_PER_MILLION.get(request.model.model)
     estimated_cost = 0.0
     if request.model.provider == "openai" and price is not None:
@@ -344,8 +556,11 @@ def estimate_complete_assessment_preflight(
         "llm_call_count": llm_call_count,
         "estimated_input_tokens": estimated_input_tokens,
         "estimated_output_tokens": estimated_output_tokens,
-        "estimated_total_tokens": estimated_input_tokens + estimated_output_tokens,
+        "estimated_total_tokens": estimated_total_tokens,
         "max_estimated_input_tokens": request.model.max_estimated_input_tokens,
+        "enforce_token_budget": request.model.enforce_token_budget,
+        "token_budget_tolerance_percent": request.model.token_budget_tolerance_percent,
+        "allowed_total_tokens": allowed_total_tokens,
         "estimated_cost_usd": estimated_cost,
         "will_exceed_guard": estimated_input_tokens > request.model.max_estimated_input_tokens,
         "note": (
@@ -679,6 +894,13 @@ def _simulated_sql(assessment_id: str) -> str:
         "FROM tprm_assessment_view\n"
         f"WHERE assessment_id = '{safe_assessment_id}';"
     )
+
+
+def _model_usage(chat_model: object) -> dict[str, Any] | None:
+    usage = getattr(chat_model, "last_usage", None)
+    if not isinstance(usage, dict):
+        return None
+    return usage
 
 
 def _rough_tokens(text: str) -> int:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -109,10 +110,21 @@ class GraphRagPipeline:
         trace_input: dict[str, Any] | None = None,
         trace_label: str = "this gap",
         model_label: str = "Selected AI model",
+        token_usage_callback: Callable[
+            [str, list[dict[str, str]], str, object],
+            dict[str, Any],
+        ]
+        | None = None,
+        token_budget_guard: Callable[[str, list[dict[str, str]]], None] | None = None,
     ) -> tuple[GraphRagAnswer, list[dict[str, Any]]]:
         full_question = _merge_question_context(question, context)
         plan = self.planner.plan(full_question)
         effective_top_k = top_k or self.settings.top_k
+        plan_output = {
+            "question_for_retrieval": full_question,
+            "search_plan": plan.model_dump(),
+            "top_k": effective_top_k,
+        }
         trace_steps: list[dict[str, Any]] = [
             {
                 "name": f"Plan searches for {trace_label}",
@@ -126,10 +138,7 @@ class GraphRagPipeline:
                     "We take the question from the previous step and split it into smaller "
                     "searches for gaps, threats, vulnerabilities, risks, controls, and standards."
                 ),
-                "output": {
-                    "question_for_retrieval": full_question,
-                    "search_plan": plan.model_dump(),
-                },
+                "output": plan_output,
             }
         ]
         evidence, graph_rows = self._retriever().retrieve(
@@ -149,11 +158,7 @@ class GraphRagPipeline:
                     "to this gap."
                 ),
                 "tool": "Qdrant vector search + BM25 keyword search + Neo4j graph lookup",
-                "input": {
-                    "question_for_retrieval": full_question,
-                    "search_plan": plan.model_dump(),
-                    "top_k": effective_top_k,
-                },
+                "input": plan_output,
                 "process": (
                     "We use the search plan from the previous step to find matching standards "
                     "paragraphs and graph links. This step does not ask the AI model to invent "
@@ -182,7 +187,41 @@ class GraphRagPipeline:
             )
             return answer, trace_steps
         messages = build_structured_answer_prompt(full_question, plan, evidence, graph_rows)
+        prompt_output = {
+            "messages_sent_to_model": messages,
+            "retrieved_evidence": retrieval_output,
+        }
+        trace_steps.append(
+            {
+                "name": f"Prepare model prompt for {trace_label}",
+                "explanation": (
+                    "Builds the exact model input from the evidence found in the standards "
+                    "library."
+                ),
+                "tool": "Python deterministic workflow",
+                "input": retrieval_output,
+                "process": (
+                    "We take the retrieved standards evidence from the previous step and place "
+                    "it into a strict prompt. This is still plain code; no model has been asked "
+                    "to write the risk answer yet."
+                ),
+                "output": prompt_output,
+            }
+        )
+        call_name = f"Risk answer model call for {trace_label}"
+        if token_budget_guard is not None:
+            token_budget_guard(call_name, messages)
         raw = self.chat_model.chat(messages)
+        token_usage = (
+            token_usage_callback(
+                call_name,
+                messages,
+                raw,
+                self.chat_model,
+            )
+            if token_usage_callback is not None
+            else None
+        )
         structured = parse_structured_answer(raw, evidence)
         sources = structured.source_citations or [
             {
@@ -199,6 +238,8 @@ class GraphRagPipeline:
             "structured_answer": structured.model_dump(),
             "sources": sources,
         }
+        if token_usage is not None:
+            model_output["token_usage"] = token_usage
         trace_steps.append(
             {
                 "name": f"Ask model to write risk answer for {trace_label}",
@@ -207,10 +248,7 @@ class GraphRagPipeline:
                     "risk and control answer."
                 ),
                 "tool": model_label,
-                "input": {
-                    "messages_sent_to_model": messages,
-                    "retrieved_evidence": retrieval_output,
-                },
+                "input": prompt_output,
                 "process": (
                     "We send only the assessment question and the retrieved evidence to the "
                     "model. The model must produce threats, vulnerabilities, risks, controls, "

@@ -238,3 +238,15 @@ The mock screen should start clean and only render output after a run. It displa
 execution workflow with expandable input/output previews for simulated PostgreSQL read, packet
 assembly, sanitization, finding classification, token estimate, model call, parsing, and simulated
 PostgreSQL write payload.
+
+For the complete GraphRAG workflow, keep the visible steps as a handoff chain: a step's output
+should become the next step's input. When the workflow loops over multiple weak questionnaire
+answers, add explicit selection/storage steps instead of hiding the branch. Each Input, Process,
+and Output preview should support opening a separate inspection window that can be closed without
+affecting the workflow page.
+
+The complete workflow has a token budget guard. Preflight estimates the total workflow tokens, then
+the configured `token_budget_tolerance_percent` produces `allowed_total_tokens`. Keep
+`enforce_token_budget=true` as the default. The workflow must compare final actual usage against
+preflight and include per-call token usage in `token_budget.calls`. Use provider-reported token
+counts when available and the local rough estimate only as a fallback.

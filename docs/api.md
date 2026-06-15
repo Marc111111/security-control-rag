@@ -184,7 +184,9 @@ Request:
     "model": "qwen3:14b",
     "confirm_external_call": false,
     "estimated_output_tokens": 1200,
-    "max_estimated_input_tokens": 24000
+    "max_estimated_input_tokens": 24000,
+    "enforce_token_budget": true,
+    "token_budget_tolerance_percent": 10
   },
   "top_k": 8,
   "debug": true
@@ -224,10 +226,19 @@ Preflight response:
   "llm_call_count": 3,
   "estimated_input_tokens": 11214,
   "estimated_output_tokens": 3600,
+  "estimated_total_tokens": 14814,
+  "enforce_token_budget": true,
+  "token_budget_tolerance_percent": 10,
+  "allowed_total_tokens": 16296,
   "estimated_cost_usd": 0.0,
   "will_exceed_guard": false
 }
 ```
+
+`allowed_total_tokens` is the workflow estimate plus the configured tolerance. When
+`enforce_token_budget=true`, the workflow checks each model call before it is sent and again after
+the response is received. Provider-reported token counts are used where available; otherwise the
+same conservative estimate is used for actual/estimated comparison.
 
 Start-job response:
 
@@ -277,6 +288,16 @@ Response:
     "estimated_output_tokens": 3600,
     "estimated_cost_usd": 0.0
   },
+  "preflight": {},
+  "token_budget": {
+    "preflight_estimated_total_tokens": 14814,
+    "tolerance_percent": 10,
+    "allowed_total_tokens": 16296,
+    "actual_total_tokens": 12000,
+    "difference_percent": -18.99,
+    "within_budget": true,
+    "calls": []
+  },
   "steps": [
     {
       "name": "Input source adapter",
@@ -300,7 +321,11 @@ Response:
 ```
 
 The UI renders `steps` vertically. Each step includes input, process, and output so analysts can
-inspect what was called, what was sent to the selected model, and what came back.
+inspect what was called, what was sent to the selected model, and what came back. The intended
+display contract is that a step output becomes the next step input. Where the workflow branches
+over multiple weak questionnaire answers, explicit selection/storage handoff steps keep that chain
+visible. Every preview block can be expanded into a separate inspection window without changing the
+running workflow.
 
 ### Mock UI and Mock Endpoints
 

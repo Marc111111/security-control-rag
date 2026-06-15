@@ -56,6 +56,13 @@ tests, and a workflow UI/API.
 - Request-scoped OpenAI API key is accepted but never persisted or returned.
 - Browser runs are async. The UI preflights token/cost estimates before model calls, starts a
   background job, polls status, and can cancel running jobs.
+- Preflight now also defines a workflow token cap. Default behavior is to enforce the estimate plus
+  `token_budget_tolerance_percent` (10% by default), compare it with actual provider usage where
+  available, and return per-call token usage in `token_budget.calls`.
+- UI workflow steps must remain a readable handoff chain: previous output becomes next input.
+  Multi-answer loops need explicit selection and storage steps so the chain does not appear to jump.
+- Each Input, Process, and Output preview has an Expand button that opens a separate inspection
+  window. Closing that window must not affect the workflow run or tab open/closed state.
 - Cancelling an Ollama job calls `ollama stop <model>` immediately, reports `cancelling` while any
   in-flight call unwinds, then calls `ollama stop <model>` again before reporting `cancelled`.
 - Job-scoped Ollama calls stream responses and pass `keep_alive=0s`; this lets cancellation be
@@ -130,6 +137,8 @@ http://127.0.0.1:8000/mock/foundation
 - New vertical workflow UI: implemented.
 - Async job polling and Cancel Run button: implemented.
 - Preflight token/cost estimate before model calls: implemented.
+- Token budget enforcement and estimate-vs-actual reporting: implemented.
+- Workflow handoff steps and separate preview windows: implemented.
 - Run persistence: implemented.
 - Unit tests for complete workflow and parser normalization: implemented.
 - Third-party service folders under `third_party/`: configured in Docker Compose.
