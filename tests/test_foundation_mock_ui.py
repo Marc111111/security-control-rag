@@ -15,6 +15,11 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "qwen3:14b" in response.text
     assert "OpenAI API key (run only)" in response.text
     assert "Estimate cost" in response.text
+    assert "Ask Standards Corpus" in response.text
+    assert "/api/query" in response.text
+    assert "askCorpus" in response.text
+    assert "corpusQuestion" in response.text
+    assert "Direct Corpus Query Result" in response.text
     assert "Token guard +/- %" in response.text
     assert "Enforce token guard" in response.text
     assert "Est. one-run price" in response.text

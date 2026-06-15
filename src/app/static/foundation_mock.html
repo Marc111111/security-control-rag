@@ -263,6 +263,41 @@
         font-size: 9px;
         line-height: 1.2;
       }
+      .corpus-chat .panel-body {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .chat-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
+      .chat-output {
+        min-height: 52px;
+        max-height: 340px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fbfcfa;
+        padding: 10px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .chat-output h3 {
+        margin: 10px 0 5px;
+        font-size: 13px;
+      }
+      .chat-output h3:first-child { margin-top: 0; }
+      .chat-output ul {
+        margin: 0 0 8px 18px;
+        padding: 0;
+      }
+      .chat-output li { margin-bottom: 3px; }
+      .chat-output .source-list {
+        color: var(--muted);
+        font-size: 11px;
+      }
       details.db-editor {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -581,6 +616,20 @@
             </div>
           </div>
         </div>
+        <div class="panel corpus-chat">
+          <div class="panel-header">
+            <div class="panel-title">Ask Standards Corpus</div>
+            <button class="secondary small" id="expandCorpusAnswer" disabled>Expand</button>
+          </div>
+          <div class="panel-body">
+            <div class="chat-row">
+              <input id="corpusQuestion" type="text" spellcheck="true" placeholder="Ask a direct standards/RAG question..." />
+              <button class="secondary" id="askCorpus">Ask</button>
+            </div>
+            <div class="status" id="corpusStatus">Direct corpus query. Separate from the questionnaire workflow.</div>
+            <div class="chat-output" id="corpusAnswer"><div class="empty">No direct question yet.</div></div>
+          </div>
+        </div>
         <details class="db-editor" id="dbEditor">
           <summary>Optional simulated DB input form</summary>
           <div class="panel-body">
@@ -668,12 +717,18 @@
       const failureModalEl = document.querySelector("#failureModal");
       const failureBodyEl = document.querySelector("#failureBody");
       const closeFailureEl = document.querySelector("#closeFailure");
+      const corpusQuestionEl = document.querySelector("#corpusQuestion");
+      const askCorpusEl = document.querySelector("#askCorpus");
+      const corpusStatusEl = document.querySelector("#corpusStatus");
+      const corpusAnswerEl = document.querySelector("#corpusAnswer");
+      const expandCorpusAnswerEl = document.querySelector("#expandCorpusAnswer");
       const savedScenarioKey = "foundationMock.savedDbScenario";
       let sample = null;
       let currentJobId = null;
       let pollTimer = null;
       let lastPreflight = null;
       let lastCompletedRun = null;
+      let lastCorpusAnswer = null;
       let runHistory = [];
       let dbFormDirty = false;
       let previewCounter = 0;
@@ -836,6 +891,82 @@
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || response.statusText);
         return data;
+      }
+
+      async function askCorpus() {
+        const question = corpusQuestionEl.value.trim();
+        if (!question) {
+          corpusStatusEl.innerHTML = `<span class="warning">Enter a question first.</span>`;
+          return;
+        }
+        askCorpusEl.disabled = true;
+        expandCorpusAnswerEl.disabled = true;
+        corpusStatusEl.textContent = "Querying the standards corpus...";
+        corpusAnswerEl.innerHTML = `<div class="empty">Waiting for the model and retrieved sources...</div>`;
+        try {
+          const answer = await postJson("/api/query", { question, top_k: 8, debug: true });
+          lastCorpusAnswer = answer;
+          renderCorpusAnswer(answer);
+          corpusStatusEl.textContent = "Corpus answer ready.";
+          expandCorpusAnswerEl.disabled = false;
+        } catch (error) {
+          lastCorpusAnswer = null;
+          corpusStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          corpusAnswerEl.innerHTML = `<div class="warning">The direct corpus query failed. Check that the API server, vector database, graph database, and configured model are available.</div>`;
+        } finally {
+          askCorpusEl.disabled = false;
+        }
+      }
+
+      function renderCorpusAnswer(data) {
+        const answer = data.answer || {};
+        const sections = [
+          textSection("Executive summary", answer.executive_summary),
+          listSection("Threats", answer.threats),
+          listSection("Vulnerabilities", answer.vulnerabilities),
+          listSection("Risks", answer.risks),
+          listSection("Recommended controls", answer.recommended_controls),
+          listSection("Missing information", answer.missing_information),
+          sourceSection(data.sources || []),
+        ].filter(Boolean);
+        const warning = data.insufficient_evidence
+          ? `<div class="warning"><strong>Insufficient evidence:</strong> the corpus did not return enough trusted material for a confident answer.</div>`
+          : "";
+        corpusAnswerEl.innerHTML = warning + (sections.length ? sections.join("") : `<div class="empty">The model returned no structured answer.</div>`);
+      }
+
+      function textSection(title, value) {
+        if (!value) return "";
+        return `<h3>${escapeHtml(title)}</h3><p>${escapeHtml(value)}</p>`;
+      }
+
+      function listSection(title, values) {
+        if (!Array.isArray(values) || !values.length) return "";
+        return `<h3>${escapeHtml(title)}</h3><ul>${values.map((item) => `<li>${escapeHtml(readableCorpusItem(item))}</li>`).join("")}</ul>`;
+      }
+
+      function readableCorpusItem(item) {
+        if (typeof item === "string") return item;
+        if (!item || typeof item !== "object") return String(item ?? "");
+        const preferred = item.title || item.name || item.control || item.risk || item.threat || item.vulnerability || item.summary || item.description;
+        if (preferred) return preferred;
+        return JSON.stringify(item);
+      }
+
+      function sourceSection(sources) {
+        if (!Array.isArray(sources) || !sources.length) return "";
+        const rows = sources.slice(0, 6).map((source, index) => {
+          const metadata = source.metadata || {};
+          const label = source.source || metadata.source_path || metadata.filename || "source";
+          const score = source.score === undefined || source.score === null ? "" : ` (${Number(source.score).toFixed(3)})`;
+          return `<li>${escapeHtml(`[S${index + 1}] ${label}${score}`)}</li>`;
+        }).join("");
+        return `<h3>Sources</h3><ul class="source-list">${rows}</ul>`;
+      }
+
+      function expandCorpusAnswer() {
+        if (!lastCorpusAnswer) return;
+        openTextWindow("Direct Corpus Query Result", JSON.stringify(lastCorpusAnswer, null, 2));
       }
 
       function requestBody() {
@@ -1674,6 +1805,14 @@
       document.querySelector("#estimateCost").addEventListener("click", estimateCost);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
+      askCorpusEl.addEventListener("click", askCorpus);
+      expandCorpusAnswerEl.addEventListener("click", expandCorpusAnswer);
+      corpusQuestionEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          askCorpus();
+        }
+      });
       expandFinalEl.addEventListener("click", expandFinalResult);
       storylineReportEl.addEventListener("click", openStorylineReport);
       codexReviewEl.addEventListener("click", openCodexReviewPacket);

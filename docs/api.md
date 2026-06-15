@@ -55,6 +55,11 @@ Debug mode includes the generated sub-question plan, retrieved chunks with score
 metadata, graph traversal rows, final prompt messages, and the raw model response. The service
 logs query debug data under `storage/evaluation`.
 
+The development UI at `/mock/foundation` also exposes a compact "Ask Standards Corpus" line that
+calls this endpoint directly. It is intentionally separate from the full questionnaire assessment
+workflow, so it can be used to test how the configured GraphRAG service model answers an ad hoc
+standards question without running the simulated PostgreSQL-to-report chain.
+
 ## Advanced GraphRAG Ingestion
 
 `POST /api/ingest`

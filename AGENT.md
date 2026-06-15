@@ -102,6 +102,10 @@ grc-graphrag-api
   again before reporting `cancelled`. Workflow-scoped Ollama calls stream responses and use
   `keep_alive=0s` to reduce cancellation latency and avoid the default keepalive residency.
 - `POST /api/query` remains the lower-level GraphRAG natural-language query endpoint.
+- `/mock/foundation` now includes an "Ask Standards Corpus" line that calls `POST /api/query`
+  directly. This is a separate development/testing surface for ad hoc standards questions; it does
+  not run the simulated PostgreSQL questionnaire workflow and currently uses the GraphRAG service
+  model configured on the backend.
 - The complete workflow must show each step's input, process, and output in the UI.
 - The workflow trace must be visually honest. Do not hide several actions inside one broad step.
   RAG planning, Qdrant/BM25/Neo4j retrieval, and each model call must appear as individual
