@@ -139,15 +139,27 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
     def foundation_mock_ui() -> str:
         return _static_file("foundation_mock.html")
 
-    @app.get("/mock/foundation/packet-editor", response_class=HTMLResponse, include_in_schema=False)
+    @app.get(
+        "/mock/foundation/packet-editor",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
     def foundation_packet_editor_ui() -> str:
         return _static_file("foundation_packet_editor.html")
 
-    @app.get("/mock/foundation/questionnaire-editor", response_class=HTMLResponse, include_in_schema=False)
+    @app.get(
+        "/mock/foundation/questionnaire-editor",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
     def foundation_questionnaire_editor_ui() -> str:
         return _static_file("foundation_questionnaire_editor.html")
 
-    @app.get("/mock/foundation/questionnaire", response_class=HTMLResponse, include_in_schema=False)
+    @app.get(
+        "/mock/foundation/questionnaire",
+        response_class=HTMLResponse,
+        include_in_schema=False,
+    )
     def foundation_questionnaire_ui() -> str:
         return _static_file("foundation_questionnaire_editor.html")
 
