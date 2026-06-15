@@ -22,6 +22,37 @@ from secure_rag.embeddings import HashEmbeddingClient
 class WorkflowFakeChatModel:
     def chat(self, messages: list[dict[str, str]]) -> str:
         joined = "\n".join(message["content"] for message in messages)
+        if "senior cybersecurity and third-party risk analyst" in joined:
+            question_id = "Q3" if "Q3" in joined else "Q2"
+            return json.dumps(
+                {
+                    "question_id": question_id,
+                    "gap_story": (
+                        "The assessment gap is weak protection or recovery. The "
+                        "standards/RAG chain links it to CIS 10.1 or NIST CSF recovery controls."
+                    ),
+                    "business_meaning": (
+                        "For this Tier 2 vendor, the gap leaves missing anti-malware protection "
+                        "or untested recovery procedures exposed to malware or ransomware."
+                    ),
+                    "risk_logic": (
+                        "The inherent risk is malware execution or ransomware recovery, with "
+                        "medium likelihood and high impact in the validated chain."
+                    ),
+                    "control_logic": (
+                        "The chain adds named controls such as CIS 10.1 and NIST CSF RC.RP. "
+                        "These controls reduce likelihood or support recovery."
+                    ),
+                    "resilience_logic": (
+                        "Recovery planning and tested restoration keep resilience visible, not "
+                        "only prevention."
+                    ),
+                    "residual_conclusion": (
+                        "Residual concern remains because implementation evidence and testing "
+                        "must confirm operating effectiveness."
+                    ),
+                }
+            )
         if "business-facing TPRM report writer" in joined:
             return json.dumps(
                 {
@@ -168,6 +199,9 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     assert any(name.startswith("Ask model to write risk answer for ") for name in step_names)
     assert any(name.startswith("Store risk answer for ") for name in step_names)
     assert "Build risk assessment chains and added-value delta" in step_names
+    assert any(name.startswith("Prepare storyline model prompt for ") for name in step_names)
+    assert any(name.startswith("Ask model to explain risk chain for ") for name in step_names)
+    assert "Build human-readable storyline report" in step_names
     assert step_names[-1] == "Prepare final result for the application"
     assert body["steps"][1]["input"] == body["steps"][0]["output"]
     assert body["steps"][2]["input"] == body["steps"][1]["output"]
@@ -195,8 +229,17 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     assert body["final_result"]["assessment_id"] == packet["assessment_id"]
     assert body["final_result"]["risk_evaluations"]
     assert body["final_result"]["risk_assessment_chains"]
+    assert body["final_result"]["business_storylines"]
+    assert body["final_result"]["storyline_report"]["per_gap"]
+    assert (
+        body["final_result"]["storyline_report"]["per_gap"][0]["gap_to_risk_story"]
+        == body["final_result"]["business_storylines"][0]
+    )
+    assert body["final_result"]["draft_sections"]["storyline_report"] == body["final_result"][
+        "storyline_report"
+    ]
     assert body["final_result"]["draft_sections"]["analysis_added_by_toolchain"]["added_by_rag"]
-    assert body["cost_estimate"]["llm_call_count"] >= 2
+    assert body["cost_estimate"]["llm_call_count"] >= 5
     assert body["cost_estimate"]["estimate_policy"] == "conservative_workflow_reserve"
     assert body["cost_estimate"]["estimated_cost_usd"] == 0
     assert body["cost_estimate"]["estimated_cost_eur"] == 0
@@ -279,7 +322,7 @@ def test_complete_assessment_preflight_endpoint_estimates_before_model_calls(
     assert response.status_code == 200
     body = response.json()
     assert body["weakness_count"] == 2
-    assert body["llm_call_count"] == 3
+    assert body["llm_call_count"] == 5
     assert body["estimate_policy"] == "conservative_workflow_reserve"
     assert body["estimated_input_tokens"] > 24_000
     assert body["max_estimated_input_tokens"] == 60_000

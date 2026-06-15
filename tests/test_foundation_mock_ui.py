@@ -31,6 +31,9 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Saved run summary" in response.text
     assert "syncDirtyDbForm" in response.text
     assert "Open Codex review packet" in response.text
+    assert "Storyline report" in response.text
+    assert "formatStorylineReport" in response.text
+    assert "Saved run storyline" in response.text
     assert "buildCodexReviewPacket" in response.text
     assert "Development-only independent quality review" in response.text
     assert "failureModal" in response.text

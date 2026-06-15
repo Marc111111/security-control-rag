@@ -26,6 +26,7 @@ from app.quality_gates import (
     human_failure_message,
     repair_prompt,
     validate_final_paragraphs,
+    validate_gap_storyline,
     validate_prompt_contract,
     validate_prompt_quality,
     validate_risk_assessment_chains,
@@ -526,6 +527,348 @@ class CompleteAssessmentWorkflow:
                 raise QualityGateFailure(risk_chain_gate)
 
             _raise_if_cancelled(cancel_event)
+            storyline_input: dict[str, Any] = {
+                **risk_assessment_output,
+                "quality_gate": risk_chain_gate.as_dict(),
+            }
+            business_storylines: list[dict[str, Any]] = []
+            for chain_index, chain in enumerate(
+                risk_assessment_output.get("risk_assessment_chains") or [],
+                1,
+            ):
+                _raise_if_cancelled(cancel_event)
+                chain_packet = _storyline_fact_packet(sanitized, chain)
+                trace_label = (
+                    f"{chain_packet['question_id']} / "
+                    f"{chain_packet['linked_control'].get('control_id')}"
+                )
+                selected_storyline_input = {
+                    "selected_risk_chain": chain_packet,
+                    "business_storylines_so_far": business_storylines,
+                    "remaining_chain_count": (
+                        len(risk_assessment_output.get("risk_assessment_chains") or [])
+                        - chain_index
+                    ),
+                }
+                add_step(
+                    WorkflowStep(
+                        name=f"Select risk chain for business storyline for {trace_label}",
+                        explanation=(
+                            "Chooses one validated gap-to-risk chain so the next model call "
+                            "can explain what it means in business language."
+                        ),
+                        tool="Python deterministic workflow",
+                        input=storyline_input,
+                        process=(
+                            "The previous step produced validated risk chains. Here we take one "
+                            "chain at a time, keeping only the gap, threats, vulnerabilities, "
+                            "risks, controls, resilience effect, and source references needed "
+                            "for a focused explanation."
+                        ),
+                        output=selected_storyline_input,
+                    )
+                )
+                storyline_messages = _storyline_prompt(chain_packet)
+                storyline_prompt_gate = validate_prompt_contract(
+                    gate="gap_storyline_prompt",
+                    messages=storyline_messages,
+                    required_phrases=[
+                        "Role:",
+                        "Objective:",
+                        "Trusted fact boundary:",
+                        "Forbidden behavior:",
+                        "Output contract:",
+                        "Do not add new threats",
+                        "75 words",
+                        "validated risk chain",
+                    ],
+                    task_name="gap storyline",
+                )
+                storyline_prompt_quality_gate = validate_prompt_quality(
+                    gate="gap_storyline_prompt_quality",
+                    messages=storyline_messages,
+                    task_name="gap storyline",
+                    max_total_chars=7_000,
+                    max_user_chars=5_600,
+                    max_source_markers=0,
+                )
+                prompt_packet = {
+                    "selected_risk_chain_from_previous_step": chain_packet,
+                    "model_prompt": _compact_messages(storyline_messages),
+                    "quality_gate": storyline_prompt_gate.as_dict(),
+                    "prompt_quality_gate": storyline_prompt_quality_gate.as_dict(),
+                    "api_key": "[hidden]",
+                }
+                add_step(
+                    WorkflowStep(
+                        name=f"Prepare storyline model prompt for {trace_label}",
+                        explanation=(
+                            "Builds a small, controlled prompt that asks the model to explain "
+                            "only this one validated risk chain."
+                        ),
+                        tool="Python prompt builder + quality gate",
+                        input=selected_storyline_input,
+                        process=(
+                            "We turn the selected chain into clear instructions: explain how the "
+                            "questionnaire gap leads to threats, vulnerabilities, risk, controls, "
+                            "and residual concern. The prompt explicitly forbids new facts."
+                        ),
+                        output=prompt_packet,
+                    )
+                )
+                if (
+                    not storyline_prompt_gate.passed
+                    or not storyline_prompt_quality_gate.passed
+                ):
+                    failed_prompt_gate = (
+                        storyline_prompt_gate
+                        if not storyline_prompt_gate.passed
+                        else storyline_prompt_quality_gate
+                    )
+                    raise QualityGateFailure(failed_prompt_gate)
+                storyline_input_tokens = _rough_tokens(
+                    json.dumps(storyline_messages, ensure_ascii=True)
+                )
+                if storyline_input_tokens > request.model.max_estimated_input_tokens:
+                    raise ValueError(
+                        "Storyline prompt exceeds max_estimated_input_tokens "
+                        f"({storyline_input_tokens} > "
+                        f"{request.model.max_estimated_input_tokens})"
+                    )
+                storyline_attempts: list[dict[str, Any]] = []
+                storyline_gate = None
+                storyline_token_usage = None
+                storyline: dict[str, Any] | None = None
+                raw_storyline = ""
+                current_storyline_messages = storyline_messages
+                for attempt in range(1, 4):
+                    call_name = (
+                        f"Gap storyline model call {trace_label}"
+                        if attempt == 1
+                        else f"Gap storyline model call repair attempt {attempt} {trace_label}"
+                    )
+                    token_tracker.assert_can_send(
+                        call_name,
+                        _rough_tokens(
+                            json.dumps(current_storyline_messages, ensure_ascii=True)
+                        ),
+                    )
+                    set_status(f"Waiting for model to explain {trace_label} (attempt {attempt})")
+                    raw_storyline = selected_chat_model.chat(current_storyline_messages)
+                    set_status(f"Validating business storyline for {trace_label}")
+                    storyline_token_usage = record_model_call(
+                        call_name,
+                        current_storyline_messages,
+                        raw_storyline,
+                        selected_chat_model,
+                    )
+                    try:
+                        storyline = _parse_storyline_strict(raw_storyline)
+                        storyline_gate = validate_gap_storyline(
+                            storyline=storyline,
+                            risk_chain=chain_packet,
+                            raw_model_output=raw_storyline,
+                        )
+                    except Exception as exc:
+                        storyline_gate = failed_gate(
+                            "gap_storyline_output",
+                            "Business storyline could not be parsed as the required JSON.",
+                            [
+                                GateIssue(
+                                    field="raw_model_output",
+                                    message=str(exc),
+                                    operator_fix=(
+                                        "Do not approve this storyline. The model did not return "
+                                        "the required business explanation contract."
+                                    ),
+                                    system_fix=(
+                                        "Retry with the repair prompt, reduce prompt size, or use "
+                                        "the deterministic storyline renderer."
+                                    ),
+                                )
+                            ],
+                        )
+                    storyline_attempts.append(
+                        {
+                            "attempt": attempt,
+                            "raw_model_output_preview": _preview_text(raw_storyline, 1_200),
+                            "business_storyline": storyline,
+                            "token_usage": storyline_token_usage,
+                            "quality_gate": storyline_gate.as_dict(),
+                        }
+                    )
+                    if storyline_gate.passed and storyline is not None:
+                        break
+                    if attempt < 3:
+                        current_storyline_messages = repair_prompt(
+                            original_messages=storyline_messages,
+                            gate_result=storyline_gate,
+                        )
+                if storyline_gate is None or not storyline_gate.passed or storyline is None:
+                    rejection_output = {
+                        "selected_risk_chain": chain_packet,
+                        "failed_model_attempts": _compact_storyline_attempts(
+                            storyline_attempts
+                        ),
+                        "quality_gate": storyline_gate.as_dict()
+                        if storyline_gate
+                        else None,
+                        "fallback_decision": (
+                            "The selected model did not produce an acceptable business "
+                            "storyline. The workflow rejects those drafts and renders the "
+                            "storyline deterministically from the validated risk chain."
+                        ),
+                        "human_explanation": human_failure_message(storyline_gate)
+                        if storyline_gate
+                        else "The quality gate did not produce a result.",
+                    }
+                    add_step(
+                        WorkflowStep(
+                            name=f"Reject unsafe model-drafted storyline for {trace_label}",
+                            explanation=(
+                                "Rejects the storyline when the model does not connect the "
+                                "validated gap to risk and controls correctly."
+                            ),
+                            tool="Python quality gate",
+                            input=prompt_packet,
+                            process=(
+                                "We review the model attempts. If the text is generic, too long, "
+                                "adds unsupported facts, or misses the validated risk chain, it "
+                                "is not used."
+                            ),
+                            output=rejection_output,
+                        )
+                    )
+                    storyline = _deterministic_storyline(chain_packet)
+                    storyline_gate = validate_gap_storyline(
+                        storyline=storyline,
+                        risk_chain=chain_packet,
+                        raw_model_output=json.dumps(storyline, ensure_ascii=True),
+                    )
+                    if not storyline_gate.passed:
+                        add_step(
+                            WorkflowStep(
+                                name=(
+                                    "Quality gate failed for deterministic storyline "
+                                    f"for {trace_label}"
+                                ),
+                                explanation=(
+                                    "Stops because even the deterministic storyline could not "
+                                    "explain the validated risk chain."
+                                ),
+                                tool="Python deterministic renderer + quality gate",
+                                input=rejection_output,
+                                process=(
+                                    "The deterministic renderer uses only the selected risk chain. "
+                                    "If this fails, the chain itself is not mature enough for a "
+                                    "business explanation."
+                                ),
+                                output=storyline_gate.as_dict(),
+                            )
+                        )
+                        raise QualityGateFailure(storyline_gate)
+                    storyline_output = {
+                        "business_storyline": storyline,
+                        "quality_gate": storyline_gate.as_dict(),
+                        "source": "deterministic_renderer_after_rejected_model_output",
+                    }
+                    add_step(
+                        WorkflowStep(
+                            name=f"Render business storyline deterministically for {trace_label}",
+                            explanation=(
+                                "Creates a safe readable explanation from the validated chain "
+                                "without using rejected model wording."
+                            ),
+                            tool="Python deterministic storyline renderer",
+                            input=rejection_output,
+                            process=(
+                                "The renderer uses the confirmed gap, threat, vulnerability, "
+                                "risk, named controls, resilience effect, and residual concern "
+                                "from the selected chain."
+                            ),
+                            output=storyline_output,
+                        )
+                    )
+                else:
+                    storyline_output = {
+                        "business_storyline": storyline,
+                        "attempts": _compact_storyline_attempts(storyline_attempts),
+                        "quality_gate": storyline_gate.as_dict(),
+                        "token_usage": storyline_token_usage,
+                    }
+                    add_step(
+                        WorkflowStep(
+                            name=f"Ask model to explain risk chain for {trace_label}",
+                            explanation=(
+                                "Asks the selected model to turn one validated risk chain into "
+                                "a short business explanation."
+                            ),
+                            tool=f"{request.model.provider}:{request.model.model}",
+                            input=prompt_packet,
+                            process=(
+                                "The model receives only the compact chain from the previous "
+                                "step. It may explain the relationship between the gap, risk, "
+                                "controls, and resilience, but it may not add new facts."
+                            ),
+                            output=storyline_output,
+                        )
+                    )
+                stored_storyline_output = {
+                    "latest_business_storyline": storyline,
+                    "business_storylines_so_far": [*business_storylines, storyline],
+                    "remaining_chain_count": (
+                        len(risk_assessment_output.get("risk_assessment_chains") or [])
+                        - chain_index
+                    ),
+                }
+                add_step(
+                    WorkflowStep(
+                        name=f"Store business storyline for {trace_label}",
+                        explanation=(
+                            "Keeps the accepted business explanation so the final report can "
+                            "show the added value per gap."
+                        ),
+                        tool="Python deterministic workflow",
+                        input=storyline_output,
+                        process=(
+                            "We store only the accepted storyline. Rejected model wording and "
+                            "debug detail do not become part of the assessment result."
+                        ),
+                        output=stored_storyline_output,
+                    )
+                )
+                business_storylines.append(storyline)
+                storyline_input = stored_storyline_output
+
+            storyline_report = _storyline_report(
+                packet=sanitized,
+                risk_assessment=risk_assessment_output,
+                business_storylines=business_storylines,
+            )
+            risk_assessment_output = {
+                **risk_assessment_output,
+                "business_storylines": business_storylines,
+                "storyline_report": storyline_report,
+            }
+            add_step(
+                WorkflowStep(
+                    name="Build human-readable storyline report",
+                    explanation=(
+                        "Creates the report view that shows how every gap moved from question "
+                        "answer to risk, controls, resilience, and conclusion."
+                    ),
+                    tool="Python deterministic report assembler",
+                    input=storyline_input,
+                    process=(
+                        "We assemble the accepted per-gap storylines into one readable report. "
+                        "This report is stored in the final JSON, so the UI and API show the "
+                        "same content."
+                    ),
+                    output=risk_assessment_output,
+                )
+            )
+
+            _raise_if_cancelled(cancel_event)
             validated_fact_packet = _validated_fact_packet(
                 sanitized,
                 findings,
@@ -539,10 +882,7 @@ class CompleteAssessmentWorkflow:
                         "Creates the clean facts that the final report writer is allowed to use."
                     ),
                     tool="Python deterministic workflow + quality gate",
-                    input={
-                        **risk_assessment_output,
-                        "quality_gate": risk_chain_gate.as_dict(),
-                    },
+                    input=risk_assessment_output,
                     process=(
                         "We remove raw debug material and keep only vendor context, tier context, "
                         "weaknesses, validated risk facts, controls, source mappings, and missing "
@@ -583,6 +923,14 @@ class CompleteAssessmentWorkflow:
                 max_user_chars=9_500,
                 max_source_markers=0,
             )
+            paragraph_input = {
+                "validated_fact_packet_from_previous_step": validated_fact_packet,
+                "report_fact_packet_sent_to_model": report_fact_packet,
+                "model_prompt": _compact_messages(paragraph_messages),
+                "quality_gate": paragraph_prompt_gate.as_dict(),
+                "prompt_quality_gate": paragraph_prompt_quality_gate.as_dict(),
+                "api_key": "[hidden]",
+            }
             if not paragraph_prompt_gate.passed or not paragraph_prompt_quality_gate.passed:
                 failed_prompt_gate = (
                     paragraph_prompt_gate
@@ -597,16 +945,36 @@ class CompleteAssessmentWorkflow:
                             "incomplete or too large."
                         ),
                         tool="Python quality gate",
-                        input={"model_prompt": _compact_messages(paragraph_messages)},
+                        input=validated_fact_packet,
                         process=(
                             "We check that the prompt explains the model role, task, trusted "
                             "fact boundary, forbidden behavior, output contract, and size "
                             "limits before any final report model call."
                         ),
-                        output=failed_prompt_gate.as_dict(),
+                        output={
+                            "model_prompt": _compact_messages(paragraph_messages),
+                            "quality_gate": failed_prompt_gate.as_dict(),
+                        },
                     )
                 )
                 raise QualityGateFailure(failed_prompt_gate)
+            add_step(
+                WorkflowStep(
+                    name="Prepare final report model prompt",
+                    explanation=(
+                        "Builds the final controlled prompt from the validated facts and "
+                        "storyline report."
+                    ),
+                    tool="Python prompt builder + quality gate",
+                    input=validated_fact_packet,
+                    process=(
+                        "We send only compact vendor context, weaknesses, risk chains, "
+                        "storyline report, and toolchain delta. The prompt tells the model to "
+                        "write five concise business paragraphs without adding facts."
+                    ),
+                    output=paragraph_input,
+                )
+            )
             paragraph_input_tokens = _rough_tokens(
                 json.dumps(paragraph_messages, ensure_ascii=True)
             )
@@ -619,14 +987,6 @@ class CompleteAssessmentWorkflow:
                 "Report paragraph model call",
                 paragraph_input_tokens,
             )
-            paragraph_input = {
-                "validated_fact_packet_from_previous_step": validated_fact_packet,
-                "report_fact_packet_sent_to_model": report_fact_packet,
-                "model_prompt": _compact_messages(paragraph_messages),
-                "quality_gate": paragraph_prompt_gate.as_dict(),
-                "prompt_quality_gate": paragraph_prompt_quality_gate.as_dict(),
-                "api_key": "[hidden]",
-            }
             _raise_if_cancelled(cancel_event)
             paragraph_attempts: list[dict[str, Any]] = []
             paragraph_gate = None
@@ -889,7 +1249,9 @@ def estimate_complete_assessment_preflight(
     )
     finding_tokens = _rough_tokens(json.dumps(_findings_dump(findings), ensure_ascii=True))
     risk_question_count = len(retrieval_input)
-    llm_call_count = max(1, risk_question_count) + 1
+    risk_call_count = max(1, risk_question_count)
+    storyline_call_count = risk_question_count
+    llm_call_count = risk_call_count + storyline_call_count + 1
     input_breakdown = _conservative_preflight_input_breakdown(
         packet_tokens=packet_tokens,
         finding_tokens=finding_tokens,
@@ -1080,6 +1442,9 @@ def _paragraph_prompt(
                 "packet.\n\n"
                 "- Do not merely repeat questionnaire gaps. The conclusion must explain what "
                 "the standards/RAG analysis added and why it changes the risk assessment.\n\n"
+                "- Use storyline_report as the per-gap reasoning backbone. It already connects "
+                "each weak answer to threats, vulnerabilities, risks, controls, resilience, "
+                "and residual concern.\n\n"
                 "- Name the most important standards or control references from "
                 "toolchain_delta or risk_assessment_chains in risk_exposure or conclusion. "
                 "Do not write only a count such as '7 controls'.\n\n"
@@ -1101,8 +1466,8 @@ def _paragraph_prompt(
                 "Task:\n"
                 "Write only the five requested paragraph values. Each paragraph must be "
                 "business-readable, concise, and grounded in the validated facts. Use the "
-                "risk_assessment_chains and toolchain_delta to show the analysis added beyond "
-                "the original SQL/questionnaire facts.\n\n"
+                "storyline_report, risk_assessment_chains, and toolchain_delta to show the "
+                "analysis added beyond the original SQL/questionnaire facts.\n\n"
                 "Required output JSON:\n"
                 "{\n"
                 '  "management_summary": "",\n'
@@ -1112,7 +1477,7 @@ def _paragraph_prompt(
                 '  "conclusion": ""\n'
                 "}\n\n"
                 "Validated fact packet:\n"
-                f"{json.dumps(validated_fact_packet, ensure_ascii=True, indent=2)}"
+                f"{json.dumps(validated_fact_packet, ensure_ascii=True, separators=(',', ':'))}"
             ),
         },
     ]
@@ -1187,6 +1552,7 @@ def _conservative_preflight_input_breakdown(
     prompt_instruction_reserve = risk_call_count * 1_600
     retrieved_chunk_reserve = risk_call_count * top_k * 900
     graph_context_reserve = risk_call_count * 1_000
+    storyline_prompt_reserve = risk_question_count * 2_100
     final_report_prompt_reserve = packet_tokens + finding_tokens + 1_500
     final_report_evidence_reserve = risk_question_count * 2_500
     subtotal = (
@@ -1195,6 +1561,7 @@ def _conservative_preflight_input_breakdown(
         + prompt_instruction_reserve
         + retrieved_chunk_reserve
         + graph_context_reserve
+        + storyline_prompt_reserve
         + final_report_prompt_reserve
         + final_report_evidence_reserve
     )
@@ -1204,10 +1571,12 @@ def _conservative_preflight_input_breakdown(
         "packet_tokens": packet_tokens,
         "finding_tokens": finding_tokens,
         "risk_call_count": risk_call_count,
+        "storyline_call_count": risk_question_count,
         "top_k": top_k,
         "prompt_instruction_reserve": prompt_instruction_reserve,
         "retrieved_chunk_reserve": retrieved_chunk_reserve,
         "graph_context_reserve": graph_context_reserve,
+        "storyline_prompt_reserve": storyline_prompt_reserve,
         "final_report_prompt_reserve": final_report_prompt_reserve,
         "final_report_evidence_reserve": final_report_evidence_reserve,
         "subtotal_before_safety_margin": subtotal,
@@ -1229,6 +1598,263 @@ def _parse_paragraphs_strict(raw: str) -> dict[str, str]:
     if missing:
         raise ValueError(f"Model output is missing required paragraph fields: {missing}")
     return {key: str(data[key]).strip() for key in keys}
+
+
+def _parse_storyline_strict(raw: str) -> dict[str, Any]:
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("Model output did not contain a JSON object.")
+    data = json.loads(raw[start : end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("Model output JSON is not an object.")
+    keys = [
+        "question_id",
+        "gap_story",
+        "business_meaning",
+        "risk_logic",
+        "control_logic",
+        "resilience_logic",
+        "residual_conclusion",
+    ]
+    missing = [
+        key
+        for key in keys
+        if not isinstance(data.get(key), str) or not data[key].strip()
+    ]
+    if missing:
+        raise ValueError(f"Model output is missing required storyline fields: {missing}")
+    return {key: str(data[key]).strip() for key in keys}
+
+
+def _storyline_prompt(chain_packet: dict[str, Any]) -> list[dict[str, str]]:
+    return [
+        {
+            "role": "system",
+            "content": (
+                "Role:\n"
+                "You are a senior cybersecurity and third-party risk analyst.\n\n"
+                "Objective:\n"
+                "Explain one validated risk chain in business language so an analyst can see "
+                "how the questionnaire gap became a threat, vulnerability, risk, control "
+                "need, resilience concern, and residual conclusion.\n\n"
+                "Trusted fact boundary:\n"
+                "Use only the validated risk chain supplied by the workflow. Do not add new "
+                "threats, new vulnerabilities, new risks, new controls, new citations, or new "
+                "business assumptions. If a point is not in the chain, do not mention it.\n\n"
+                "Forbidden behavior:\n"
+                "- Do not add new threats or controls.\n"
+                "- Do not re-analyze standards text.\n"
+                "- Do not critique the JSON.\n"
+                "- Do not include markdown.\n"
+                "- Do not use urgency words such as critical, immediate, unacceptable, or "
+                "severe unless those exact words appear in the validated risk chain.\n\n"
+                "Output contract:\n"
+                "Return only valid JSON with exactly these keys: question_id, gap_story, "
+                "business_meaning, risk_logic, control_logic, resilience_logic, "
+                "residual_conclusion.\n\n"
+                "Output discipline:\n"
+                "Each value except question_id must be one or two concise sentences and at "
+                "most 75 words. Put the concrete fact first. Avoid filler, methodology "
+                "explanations, adjectives, and broad security education."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                "Task:\n"
+                "Write the business storyline for this single validated risk chain. The "
+                "storyline must help a business owner understand what the toolchain added "
+                "beyond the original questionnaire gap.\n\n"
+                "Required output JSON:\n"
+                "{\n"
+                '  "question_id": "",\n'
+                '  "gap_story": "",\n'
+                '  "business_meaning": "",\n'
+                '  "risk_logic": "",\n'
+                '  "control_logic": "",\n'
+                '  "resilience_logic": "",\n'
+                '  "residual_conclusion": ""\n'
+                "}\n\n"
+                "Validated risk chain:\n"
+                f"{json.dumps(chain_packet, ensure_ascii=True, separators=(',', ':'))}"
+            ),
+        },
+    ]
+
+
+def _storyline_fact_packet(
+    packet: FoundationAssessmentPacket,
+    chain: dict[str, Any],
+) -> dict[str, Any]:
+    compact_chain = _compact_risk_chain_for_report(chain)
+    return {
+        "vendor": {
+            "name": packet.vendor.name,
+            "vendor_type": packet.vendor.vendor_type,
+            "business_relationship": packet.vendor.business_relationship,
+        },
+        "tier": {
+            "level": packet.tier.level,
+            "definition": packet.tier.definition,
+        },
+        **compact_chain,
+    }
+
+
+def _deterministic_storyline(chain: dict[str, Any]) -> dict[str, Any]:
+    control = _dict(chain.get("linked_control"))
+    controls = _requirement_names(chain.get("standards_requirements_added") or [], 3)
+    grouped_controls = _dict(chain.get("recommended_controls_by_function"))
+    if not controls:
+        controls = _first_values(
+            [
+                control
+                for values in grouped_controls.values()
+                if isinstance(values, list)
+                for control in values
+            ],
+            3,
+        )
+    gaps = _first_values(chain.get("confirmed_gaps") or [], 2)
+    threats = _first_values(chain.get("threat_scenarios") or [], 2)
+    vulnerabilities = _first_values(chain.get("vulnerabilities") or [], 2)
+    inherent = _dict(chain.get("inherent_risk"))
+    residual = _dict(chain.get("residual_concern"))
+    resilience = _first_values(chain.get("resilience_effects") or [], 1)
+    question_id = str(chain.get("question_id") or "")
+    control_name = " ".join(
+        str(value or "")
+        for value in [
+            control.get("framework"),
+            control.get("control_id"),
+            control.get("title"),
+        ]
+        if value
+    )
+    gap_text = _join_human(gaps) or control_name or "the weak questionnaire answer"
+    threat_text = _join_human(threats) or "the relevant threat scenario"
+    vulnerability_text = _join_human(vulnerabilities) or "the control weakness"
+    risk_text = str(inherent.get("risk_statement") or "vendor risk exposure")
+    control_text = _join_human(controls) or control_name or "the linked control"
+    resilience_text = _join_human(resilience) or str(
+        residual.get("remaining_issue") or "resilience remains evidence-dependent"
+    )
+    return {
+        "question_id": question_id,
+        "gap_story": (
+            f"The assessment gap is {gap_text}. The questionnaire shows the weak answer; "
+            f"the standards/RAG chain links it to {control_name or control_text}."
+        ),
+        "business_meaning": (
+            f"For this vendor tier, the gap matters because it can leave {vulnerability_text} "
+            f"available to {threat_text}."
+        ),
+        "risk_logic": (
+            f"The inherent risk is {risk_text}, with likelihood "
+            f"{inherent.get('likelihood', 'unknown')} "
+            f"and impact {inherent.get('impact', 'unknown')} in the validated chain."
+        ),
+        "control_logic": (
+            f"The chain adds named controls: {control_text}. These controls are the concrete "
+            "measures to reduce likelihood, improve detection, support response, or restore "
+            "service."
+        ),
+        "resilience_logic": (
+            f"Resilience is addressed through {resilience_text}. This keeps recovery and response "
+            "capability visible, not only prevention."
+        ),
+        "residual_conclusion": (
+            "Residual concern remains: "
+            f"{residual.get('remaining_issue', 'evidence must confirm operating effectiveness')}. "
+            "Analyst review should confirm implementation and testing evidence."
+        ),
+    }
+
+
+def _storyline_report(
+    *,
+    packet: FoundationAssessmentPacket,
+    risk_assessment: dict[str, Any],
+    business_storylines: list[dict[str, Any]],
+) -> dict[str, Any]:
+    chains = risk_assessment.get("risk_assessment_chains") or []
+    rows = []
+    for index, storyline in enumerate(business_storylines):
+        chain = _dict(chains[index] if index < len(chains) else {})
+        control = _dict(chain.get("linked_control"))
+        rows.append(
+            {
+                "question_id": storyline.get("question_id"),
+                "linked_control": {
+                    "framework": control.get("framework"),
+                    "control_id": control.get("control_id"),
+                    "title": control.get("title"),
+                },
+                "gap_to_risk_story": storyline,
+            }
+        )
+    return {
+        "title": f"Gap-to-risk storyline for {packet.vendor.name}",
+        "purpose": (
+            "Human-readable view of the same validated JSON result. It shows what the "
+            "toolchain added for each weak questionnaire answer."
+        ),
+        "per_gap": rows,
+        "overall_conclusion": _storyline_overall_conclusion(packet, chains, business_storylines),
+    }
+
+
+def _storyline_overall_conclusion(
+    packet: FoundationAssessmentPacket,
+    chains: list[Any],
+    storylines: list[dict[str, Any]],
+) -> str:
+    gaps = _first_values(
+        [
+            gap
+            for chain in chains
+            for gap in (_dict(chain).get("confirmed_gaps") or [])
+        ],
+        3,
+    )
+    controls = _controls_from_chains(chains, per_chain=2, limit=4)
+    residual = _first_values(
+        [
+            _dict(_dict(chain).get("residual_concern")).get("remaining_issue")
+            for chain in chains
+        ],
+        2,
+    )
+    residual_text = _lower_first(
+        _join_human(residual) or "that evidence must confirm operating effectiveness"
+    )
+    return (
+        f"{packet.vendor.name} has {len(storylines)} weak answer(s) requiring analyst review. "
+        f"The workflow connects {_join_human(gaps) or 'the gaps'} to named controls "
+        f"{_join_human(controls) or 'from the standards corpus'} and residual concern "
+        f"{residual_text}."
+    )
+
+
+def _compact_storyline_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for attempt in attempts:
+        gate = _dict(attempt.get("quality_gate"))
+        compact.append(
+            {
+                "attempt": attempt.get("attempt"),
+                "raw_model_output_preview": attempt.get("raw_model_output_preview"),
+                "business_storyline": attempt.get("business_storyline"),
+                "quality_gate": {
+                    "passed": gate.get("passed"),
+                    "summary": gate.get("summary"),
+                    "issues": gate.get("issues"),
+                },
+                "token_usage": attempt.get("token_usage"),
+            }
+        )
+    return compact
 
 
 def _deterministic_paragraphs(validated_fact_packet: dict[str, Any]) -> dict[str, str]:
@@ -1334,9 +1960,12 @@ def _report_fact_packet(validated_fact_packet: dict[str, Any]) -> dict[str, Any]
             for item in (validated_fact_packet.get("weaknesses") or [])[:5]
         ],
         "risk_assessment_chains": [
-            _compact_risk_chain_for_report(chain)
+            _compact_risk_chain_for_final_prompt(chain)
             for chain in (validated_fact_packet.get("risk_assessment_chains") or [])[:5]
         ],
+        "storyline_report": _compact_storyline_report_for_prompt(
+            validated_fact_packet.get("storyline_report")
+        ),
         "toolchain_delta": _compact_toolchain_delta_for_report(
             validated_fact_packet.get("toolchain_delta")
         ),
@@ -1371,6 +2000,46 @@ def _compact_risk_chain_for_report(chain: Any) -> dict[str, Any]:
         "residual_concern": item.get("residual_concern"),
         "missing_information": _first_values(item.get("missing_information") or [], 2),
         "added_value_summary": item.get("added_value_summary"),
+    }
+
+
+def _compact_risk_chain_for_final_prompt(chain: Any) -> dict[str, Any]:
+    item = _dict(chain)
+    linked_control = _dict(item.get("linked_control"))
+    return {
+        "question_id": item.get("question_id"),
+        "linked_control": {
+            "framework": linked_control.get("framework"),
+            "control_id": linked_control.get("control_id"),
+            "title": linked_control.get("title"),
+        },
+        "confirmed_gaps": _first_values(item.get("confirmed_gaps") or [], 2),
+        "threat_scenarios": _first_values(item.get("threat_scenarios") or [], 2),
+        "vulnerabilities": _first_values(item.get("vulnerabilities") or [], 2),
+        "inherent_risk": item.get("inherent_risk"),
+        "key_controls": _requirement_names(
+            item.get("standards_requirements_added") or [],
+            3,
+        ),
+        "resilience_effects": _first_values(item.get("resilience_effects") or [], 1),
+        "residual_concern": item.get("residual_concern"),
+        "missing_information": _first_values(item.get("missing_information") or [], 2),
+    }
+
+
+def _compact_storyline_report_for_prompt(value: Any) -> dict[str, Any]:
+    report = _dict(value)
+    return {
+        "title": report.get("title"),
+        "per_gap": [
+            {
+                "question_id": _dict(row).get("question_id"),
+                "linked_control": _dict(row).get("linked_control"),
+                "gap_to_risk_story": _dict(row).get("gap_to_risk_story"),
+            }
+            for row in (report.get("per_gap") or [])[:5]
+        ],
+        "overall_conclusion": report.get("overall_conclusion"),
     }
 
 
@@ -1518,6 +2187,8 @@ def _validated_fact_packet(
         "weaknesses": [finding.model_dump(mode="json") for finding in findings["weaknesses"]],
         "validated_risk_facts": validated_risk_facts,
         "risk_assessment_chains": risk_assessment.get("risk_assessment_chains") or [],
+        "business_storylines": risk_assessment.get("business_storylines") or [],
+        "storyline_report": risk_assessment.get("storyline_report") or {},
         "toolchain_delta": risk_assessment.get("toolchain_delta") or {},
         "reporting_rules": {
             "do_not_invent_new_facts": True,
@@ -1551,10 +2222,13 @@ def _final_result(
                 for finding in findings["weaknesses"]
                 if not finding.evidence_ids
             ],
+            "storyline_report": risk_assessment.get("storyline_report") or {},
             "analysis_added_by_toolchain": risk_assessment.get("toolchain_delta") or {},
         },
         "risk_evaluations": rag_answers,
         "risk_assessment_chains": risk_assessment.get("risk_assessment_chains") or [],
+        "business_storylines": risk_assessment.get("business_storylines") or [],
+        "storyline_report": risk_assessment.get("storyline_report") or {},
         "snapshot_ready": False,
         "source_question_ids": [result.question_id for result in packet.questionnaire_results],
     }

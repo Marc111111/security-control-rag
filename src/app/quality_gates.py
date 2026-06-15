@@ -51,6 +51,14 @@ class QualityGateFailure(RuntimeError):
 
 
 def human_failure_message(result: GateResult) -> str:
+    if result.gate == "gap_storyline_output":
+        return (
+            "The workflow stopped while explaining one questionnaire gap in business terms. "
+            "The model did not connect the gap to a threat, vulnerability, risk, named control, "
+            "and residual concern using the validated chain. Do not approve this run; retry with "
+            "a stronger model or ask the solution owner to tighten the storyline prompt and "
+            "validator."
+        )
     if result.gate == "risk_answer_output":
         fields = {issue.field for issue in result.issues}
         missing_matrix = any(field.startswith("risk_control_matrix") for field in fields)
@@ -494,6 +502,38 @@ def validate_workflow_step_contract(
                 )
             )
 
+    if step_name == "Prepare final report model prompt":
+        output = _dict(output_payload)
+        prompt = _dict(output.get("model_prompt"))
+        chars = int(prompt.get("total_characters_sent_to_model") or 0)
+        if chars <= 0:
+            issues.append(_step_issue("output.model_prompt", "Final report prompt is missing."))
+        elif chars > 12_000:
+            issues.append(
+                _step_issue(
+                    "output.model_prompt",
+                    f"Final report prompt is too large ({chars:,} characters > 12,000).",
+                    system_fix=(
+                        "Compact the report fact packet and use the storyline report instead "
+                        "of full risk-chain/debug data."
+                    ),
+                )
+            )
+        if _dict(output.get("quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.quality_gate",
+                    "Final report prompt contract gate did not pass before the model call.",
+                )
+            )
+        if _dict(output.get("prompt_quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.prompt_quality_gate",
+                    "Final report prompt quality gate did not pass before the model call.",
+                )
+            )
+
     if step_name == "Build risk assessment chains and added-value delta":
         chains = _dict(output_payload).get("risk_assessment_chains")
         delta = _dict(output_payload).get("toolchain_delta")
@@ -517,6 +557,60 @@ def validate_workflow_step_contract(
                         "Compare initial assessment gaps with standards-backed risk facts and "
                         "store the added controls, risks, and resilience findings."
                     ),
+                )
+            )
+
+    if step_name.startswith("Prepare storyline model prompt for "):
+        output = _dict(output_payload)
+        prompt = _dict(output.get("model_prompt"))
+        chars = int(prompt.get("total_characters_sent_to_model") or 0)
+        if chars <= 0:
+            issues.append(
+                _step_issue("output.model_prompt", "Storyline prompt summary is missing.")
+            )
+        elif chars > 7_000:
+            issues.append(
+                _step_issue(
+                    "output.model_prompt",
+                    f"Storyline prompt is too large ({chars:,} characters > 7,000).",
+                    system_fix=(
+                        "Send only the selected risk chain, compact controls, and compact "
+                        "source references for this one gap."
+                    ),
+                )
+            )
+        if _dict(output.get("quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.quality_gate",
+                    "Storyline prompt contract gate did not pass before the model call.",
+                )
+            )
+
+    if step_name.startswith("Ask model to explain risk chain for "):
+        output = _dict(output_payload)
+        if _dict(output.get("quality_gate")).get("passed") is not True:
+            issues.append(
+                _step_issue(
+                    "output.quality_gate",
+                    "Business storyline was not accepted by the output quality gate.",
+                )
+            )
+        storyline = _dict(output.get("business_storyline"))
+        required = [
+            "gap_story",
+            "business_meaning",
+            "risk_logic",
+            "control_logic",
+            "resilience_logic",
+            "residual_conclusion",
+        ]
+        missing = [field for field in required if not str(storyline.get(field) or "").strip()]
+        if missing:
+            issues.append(
+                _step_issue(
+                    "output.business_storyline",
+                    f"Business storyline is missing fields: {', '.join(missing)}.",
                 )
             )
 
@@ -561,6 +655,119 @@ def validate_workflow_step_contract(
     )
 
 
+def validate_gap_storyline(
+    *,
+    storyline: dict[str, Any],
+    risk_chain: dict[str, Any],
+    raw_model_output: str,
+) -> GateResult:
+    issues: list[GateIssue] = []
+    required_fields = [
+        "question_id",
+        "gap_story",
+        "business_meaning",
+        "risk_logic",
+        "control_logic",
+        "resilience_logic",
+        "residual_conclusion",
+    ]
+    for field_name in required_fields:
+        value = str(storyline.get(field_name) or "").strip()
+        if not value or _is_bad_text(value):
+            issues.append(_storyline_issue(field_name, "Storyline field is missing or unusable."))
+        elif _word_count(value) > 75:
+            issues.append(
+                _storyline_issue(
+                    field_name,
+                    "Storyline field is too long for a reviewer to inspect quickly.",
+                    system_fix=(
+                        "Constrain the storyline prompt to one or two concise sentences per "
+                        "field, with no methodology explanation."
+                    ),
+                )
+            )
+
+    expected_question_id = str(risk_chain.get("question_id") or "").strip()
+    if (
+        expected_question_id
+        and str(storyline.get("question_id") or "").strip() != expected_question_id
+    ):
+        issues.append(
+            _storyline_issue(
+                "question_id",
+                "Storyline question_id does not match the selected risk chain.",
+                system_fix="Force the model to copy the exact question_id from the input chain.",
+            )
+        )
+
+    raw_lower = raw_model_output.lower()
+    if _looks_like_meta_failure(raw_model_output):
+        issues.append(
+            _storyline_issue(
+                "raw_model_output",
+                "The model answered with meta-commentary instead of the storyline contract.",
+                system_fix=(
+                    "Retry with a repair prompt or use the deterministic storyline renderer."
+                ),
+            )
+        )
+    forbidden = _unsupported_urgency_terms(raw_lower, _json_lower(risk_chain))
+    if forbidden:
+        issues.append(
+            _storyline_issue(
+                "business_storyline",
+                f"Storyline uses unsupported urgency or severity wording: {', '.join(forbidden)}.",
+                system_fix=(
+                    "Reject unsupported urgency words unless the validated chain explicitly "
+                    "contains them."
+                ),
+            )
+        )
+
+    combined = " ".join(
+        str(storyline.get(field) or "")
+        for field in required_fields
+        if field != "question_id"
+    ).lower()
+    required_groups = {
+        "confirmed gap": risk_chain.get("confirmed_gaps") or [],
+        "threat": risk_chain.get("threat_scenarios") or [],
+        "vulnerability": risk_chain.get("vulnerabilities") or [],
+        "risk": [_dict(risk_chain.get("inherent_risk")).get("risk_statement")],
+        "control": [
+            _dict(requirement).get("control") or requirement
+            for requirement in (risk_chain.get("standards_requirements_added") or [])
+        ],
+        "resilience or residual concern": [
+            *(risk_chain.get("resilience_effects") or []),
+            _dict(risk_chain.get("residual_concern")).get("remaining_issue"),
+        ],
+    }
+    for label, candidates in required_groups.items():
+        if not _any_meaningful_overlap(combined, candidates):
+            issues.append(
+                _storyline_issue(
+                    label,
+                    f"Storyline does not clearly reuse the validated {label} from the chain.",
+                    system_fix=(
+                        "Build the prompt from compact validated chain fields and require the "
+                        f"storyline to explain the selected {label}."
+                    ),
+                )
+            )
+
+    if issues:
+        return failed_gate(
+            "gap_storyline_output",
+            "A business storyline did not meet the gap-to-risk explanation contract.",
+            issues,
+        )
+    return passed_gate(
+        "gap_storyline_output",
+        "The business storyline connects the gap to risk, controls, and residual concern.",
+    )
+
+
 def _dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -575,6 +782,27 @@ def _step_issue(
     system_fix: str = (
         "Fix the step implementation so it passes the expected compact business object to "
         "the next step."
+    ),
+) -> GateIssue:
+    return GateIssue(
+        field=field,
+        message=message,
+        operator_fix=operator_fix,
+        system_fix=system_fix,
+    )
+
+
+def _storyline_issue(
+    field: str,
+    message: str,
+    *,
+    operator_fix: str = (
+        "Do not approve this storyline. Review the selected gap and rerun after evidence, "
+        "prompt, or model settings are corrected."
+    ),
+    system_fix: str = (
+        "Fix the storyline prompt, parser, or validator so the model explains only the "
+        "validated risk chain."
     ),
 ) -> GateIssue:
     return GateIssue(
@@ -1248,6 +1476,34 @@ def _has_term_support(value: object, support_text: str) -> bool:
     if not terms:
         return False
     return any(_term_supported(term, support_text) for term in terms)
+
+
+def _any_meaningful_overlap(text: str, candidates: list[Any]) -> bool:
+    for candidate in candidates:
+        if _has_term_support(candidate, text):
+            return True
+        candidate_text = str(candidate or "").lower()
+        if _looks_like_framework_label(candidate_text):
+            tokens = [
+                token
+                for token in re.findall(r"[a-z0-9]+", candidate_text)
+                if len(token) >= 2
+            ]
+            if tokens and all(token in text for token in tokens[:2]):
+                return True
+    return False
+
+
+def _json_lower(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, default=str).lower()
+
+
+def _unsupported_urgency_terms(output_text: str, support_text: str) -> list[str]:
+    return [
+        term
+        for term in ["critical", "immediate", "unacceptable", "severe"]
+        if term in output_text and term not in support_text
+    ]
 
 
 def _term_supported(term: str, support_text: str) -> bool:

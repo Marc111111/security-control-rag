@@ -23,6 +23,9 @@ Implementation status as of 2026-06-15:
   must not hide them behind generic counts such as `7 controls`;
 - final reports must avoid urgency or severity terms such as `critical`, `immediate`,
   `unacceptable`, or `severe` unless those terms are present in the validated fact packet;
+- per-gap business storylines are now gated with `gap_storyline_output` so the workflow proves how
+  each questionnaire gap maps to threats, vulnerabilities, risks, named controls, resilience, and
+  residual concern before final report drafting;
 - when final-paragraph model retries fail, the workflow may continue only through a visible
   rejection step followed by a deterministic report renderer that uses the same validated facts and
   must pass the same final paragraph gate;
@@ -232,7 +235,35 @@ Checks:
 
 Failure behavior: stop before final report drafting.
 
-### 8. Final Paragraph Prompt Gate
+### 8. Per-Gap Business Storyline Gate
+
+Applies after deterministic risk-chain construction and before final report drafting.
+
+Prompt checks:
+
+- prompt receives exactly one compact validated risk chain;
+- prompt includes role, objective, trusted fact boundary, forbidden behavior, output contract, and
+  short-field limits;
+- prompt forbids new threats, vulnerabilities, risks, controls, citations, assumptions, and
+  unsupported urgency wording;
+- prompt asks for only: question ID, gap story, business meaning, risk logic, control logic,
+  resilience logic, and residual conclusion.
+
+Output checks:
+
+- valid JSON with exactly the required storyline fields;
+- question ID matches the selected chain;
+- every field is concise and reviewer-readable;
+- storyline reuses the validated gap, threat, vulnerability, risk, named control, and
+  resilience/residual concern;
+- no generic "security should improve" wording passes without the validated chain content;
+- no unsupported urgency or severity language.
+
+Failure behavior: retry with validation errors. If still invalid, visibly reject the model drafts.
+The workflow may render a deterministic storyline from the validated chain only, and that output
+must pass this same gate before the storyline can feed final reporting.
+
+### 9. Final Paragraph Prompt Gate
 
 Applies before the final report-writing LLM call.
 
@@ -252,7 +283,7 @@ Checks:
 
 Failure behavior: stop before the model call.
 
-### 9. Final Paragraph Output Gate
+### 10. Final Paragraph Output Gate
 
 Applies after the final report-writing LLM call.
 

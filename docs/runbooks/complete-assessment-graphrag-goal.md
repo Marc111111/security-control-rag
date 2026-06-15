@@ -188,14 +188,15 @@ http://127.0.0.1:8000/mock/foundation
   - BM25 JSONL: 22,800 unique chunks.
   - Neo4j: 2,800 nodes and 14,021 relationships.
 - Last successful audited local workflow run:
-  - `data/workflow_runs/run-2026-06-15T131050315525+0000-63502dda/run.json`
+  - `data/workflow_runs/run-2026-06-15T140250316462+0000-85fd39eb/run.json`
   - model `qwen3:14b`
-  - 21 workflow steps
+  - 31 workflow steps
   - audit passed with 0 blocking issues and 0 warnings
-  - actual usage: 11,071 input tokens + 3,877 output tokens = 14,948 total
-  - preflight cap: 46,758 total tokens
+  - actual usage: 11,862 input tokens + 4,771 output tokens = 16,633 total
+  - preflight cap: 55,635 total tokens
   - anti-malware gap produced CIS Safeguard 10.1, CIS Control 10, and SCF END-04 controls
   - DR/business-continuity gap produced SCF BCD recovery controls
+  - per-gap business storylines were generated and stored in `final_result.storyline_report`
   - final report model attempts were rejected for unsupported `critical` wording and missing named
     controls
   - deterministic renderer produced gated paragraphs that named CIS/SCF controls across both risk
@@ -374,6 +375,40 @@ If the selected model ignores the final report contract after repair retries, th
 `Reject unsafe model-drafted report paragraphs` and then may use
 `Render report paragraphs deterministically`. That renderer is not allowed to invent facts; it uses
 only the validated fact packet and must pass the same final paragraph output gate.
+
+## 2026-06-15 Per-Gap Business Storyline Layer
+
+The workflow now includes an explicit storyline stage between risk-chain construction and final
+report drafting. This stage exists because the final answer must show the business value added by
+the toolchain, not just restate questionnaire gaps.
+
+New visible steps:
+
+- `Select risk chain for business storyline for ...`
+- `Prepare storyline model prompt for ...`
+- `Ask model to explain risk chain for ...`, or `Reject unsafe model-drafted storyline for ...`
+  followed by `Render business storyline deterministically for ...`
+- `Store business storyline for ...`
+- `Build human-readable storyline report`
+
+The storyline prompt receives one compact validated risk chain and asks the model to explain only
+the gap story, business meaning, risk logic, control logic, resilience logic, and residual
+conclusion. It may not add new threats, vulnerabilities, risks, controls, citations, or assumptions.
+
+The `gap_storyline_output` gate checks that the storyline reuses the validated gap, threat,
+vulnerability, risk, named control, and resilience/residual concern. It also blocks generic
+storylines and unsupported urgency language.
+
+The final JSON now includes:
+
+- `business_storylines`: accepted per-gap storyline objects;
+- `storyline_report`: the human-readable report assembled from those same objects;
+- `draft_sections.storyline_report`: the same report inside the draft section for UI/reporting
+  convenience.
+
+The browser now has a `Storyline report` button beside the final JSON contract. Saved runs also
+have a Storyline action. The readable report is rendered from `final_result.storyline_report`; it is
+not separately generated in the browser, so it cannot drift from the API result.
 
 ## Known Risks And Improvements
 

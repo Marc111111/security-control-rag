@@ -312,6 +312,26 @@ labels, limited lists, and no background prose. Final report calls may use prose
 `max_output_tokens`; Ollama calls use `num_predict`. Token gates protect model-call size/cost,
 payload hygiene gates protect step-to-step data cleanliness, and style gates protect usefulness.
 
+On 2026-06-15, the complete-assessment workflow was extended with per-gap business storyline
+analysis. This is now part of the core contract, not a UI-only view:
+
+- after deterministic risk chains are built, the workflow selects each chain individually;
+- a focused storyline prompt asks the selected model to explain how that one questionnaire gap
+  maps to threats, vulnerabilities, inherent risk, named controls, resilience effect, and residual
+  concern;
+- a `gap_storyline_output` quality gate validates that the storyline reuses the validated chain
+  and does not add unsupported facts;
+- rejected storyline drafts are visible and may fall back only to a deterministic renderer that
+  uses the same validated chain and passes the same gate;
+- accepted storylines are stored in `final_result.business_storylines` and
+  `final_result.storyline_report`;
+- the UI `Storyline report` button renders `final_result.storyline_report`, so the readable report
+  and JSON contract cannot diverge.
+
+The final report prompt now receives compact `storyline_report` context in addition to compact
+risk chains and toolchain delta. This makes the final paragraphs answer the real business question:
+what did RAG/GraphRAG add beyond the original SQL/questionnaire gaps?
+
 On 2026-06-15, the complete-assessment workflow was hardened with an API-driven step audit loop:
 
 - `scripts/audit_complete_assessment_workflow.py` runs the real HTTP workflow, polls the async job,
@@ -330,8 +350,9 @@ On 2026-06-15, the complete-assessment workflow was hardened with an API-driven 
 - Final report validation rejects unsupported risk-acceptance/threshold claims such as
   `acceptable risk` unless the validated fact packet explicitly contains that decision basis.
 - Latest validated run at the time of this note:
-  `run-2026-06-15T131050315525+0000-63502dda`, `qwen3:14b`, 21 steps, audit passed,
-  actual tokens 11,071 input + 3,877 output = 14,948 total, preflight cap 46,758.
-  The final report model attempts were rejected for unsupported `critical` wording and missing
-  named controls; the deterministic renderer produced gated paragraphs of 66, 66, and 86 words for
-  management summary, risk exposure, and conclusion.
+  `run-2026-06-15T140250316462+0000-85fd39eb`, `qwen3:14b`, 31 steps, audit passed,
+  actual tokens 11,862 input + 4,771 output = 16,633 total, preflight cap 55,635.
+  This run includes accepted per-gap business storylines in `final_result.storyline_report`.
+  The final report model attempts still required repair and the workflow used the gated
+  deterministic renderer for the final paragraphs; the accepted result names CIS/SCF controls,
+  distinguishes evidence gaps, and stays under the paragraph word caps.

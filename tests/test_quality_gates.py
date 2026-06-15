@@ -1,6 +1,7 @@
 from app.quality_gates import (
     prune_unsupported_risk_answer,
     validate_final_paragraphs,
+    validate_gap_storyline,
     validate_prompt_quality,
     validate_risk_answer,
     validate_risk_assessment_chains,
@@ -343,6 +344,71 @@ def test_risk_assessment_chain_gate_requires_delta_and_business_fields() -> None
 
     assert gate.passed is False
     assert any("toolchain_delta" in issue.field for issue in gate.issues)
+
+
+def test_gap_storyline_gate_requires_business_chain_coverage() -> None:
+    chain = {
+        "question_id": "Q2",
+        "confirmed_gaps": ["No anti-malware deployment"],
+        "threat_scenarios": ["Malware"],
+        "vulnerabilities": ["Unprotected endpoints"],
+        "inherent_risk": {"risk_statement": "Malware execution"},
+        "standards_requirements_added": ["CIS Safeguard 10.1"],
+        "resilience_effects": ["Detection supports response only when ownership is evidenced."],
+        "residual_concern": {
+            "remaining_issue": "Operating effectiveness evidence is still missing."
+        },
+    }
+    storyline = {
+        "question_id": "Q2",
+        "gap_story": "No anti-malware deployment is the validated gap.",
+        "business_meaning": "The gap leaves unprotected endpoints exposed to malware.",
+        "risk_logic": "The inherent risk is malware execution for the vendor.",
+        "control_logic": "The chain adds CIS Safeguard 10.1 as the named control.",
+        "resilience_logic": "Detection supports response only when ownership is evidenced.",
+        "residual_conclusion": "Operating effectiveness evidence is still missing.",
+    }
+
+    gate = validate_gap_storyline(
+        storyline=storyline,
+        risk_chain=chain,
+        raw_model_output=str(storyline),
+    )
+
+    assert gate.passed is True
+
+
+def test_gap_storyline_gate_blocks_generic_storyline() -> None:
+    chain = {
+        "question_id": "Q2",
+        "confirmed_gaps": ["No anti-malware deployment"],
+        "threat_scenarios": ["Malware"],
+        "vulnerabilities": ["Unprotected endpoints"],
+        "inherent_risk": {"risk_statement": "Malware execution"},
+        "standards_requirements_added": ["CIS Safeguard 10.1"],
+        "resilience_effects": ["Detection supports response only when ownership is evidenced."],
+        "residual_concern": {
+            "remaining_issue": "Operating effectiveness evidence is still missing."
+        },
+    }
+    storyline = {
+        "question_id": "Q2",
+        "gap_story": "The vendor has some security gaps.",
+        "business_meaning": "This may create business issues.",
+        "risk_logic": "The organization should improve security.",
+        "control_logic": "Controls should be implemented.",
+        "resilience_logic": "Resilience should be improved.",
+        "residual_conclusion": "More work is needed.",
+    }
+
+    gate = validate_gap_storyline(
+        storyline=storyline,
+        risk_chain=chain,
+        raw_model_output=str(storyline),
+    )
+
+    assert gate.passed is False
+    assert any("validated control" in issue.message for issue in gate.issues)
 
 
 def test_workflow_payload_gate_blocks_debug_leakage() -> None:

@@ -299,18 +299,18 @@ Response:
   "provider": "ollama",
   "model": "qwen3:14b",
   "cost_estimate": {
-    "llm_call_count": 3,
-    "estimated_input_tokens": 38907,
-    "estimated_output_tokens": 3600,
-    "estimated_total_tokens": 42507,
+    "llm_call_count": 5,
+    "estimated_input_tokens": 44577,
+    "estimated_output_tokens": 6000,
+    "estimated_total_tokens": 50577,
     "estimated_cost_usd": 0.0,
     "estimated_cost_eur": 0.0
   },
   "preflight": {},
   "token_budget": {
-    "preflight_estimated_total_tokens": 42507,
+    "preflight_estimated_total_tokens": 50577,
     "tolerance_percent": 10,
-    "allowed_total_tokens": 46758,
+    "allowed_total_tokens": 55635,
     "actual_total_tokens": 12000,
     "difference_percent": -71.77,
     "within_budget": true,
@@ -330,8 +330,39 @@ Response:
   "final_result": {
     "assessment_id": "A-100",
     "vendor_id": "V-1",
-    "draft_sections": {},
+    "draft_sections": {
+      "management_summary": "",
+      "risk_exposure": "",
+      "conclusion": "",
+      "storyline_report": {}
+    },
     "risk_evaluations": [],
+    "risk_assessment_chains": [],
+    "business_storylines": [],
+    "storyline_report": {
+      "title": "Gap-to-risk storyline for Acme SaaS",
+      "purpose": "Human-readable view of the same validated JSON result.",
+      "per_gap": [
+        {
+          "question_id": "Q2",
+          "linked_control": {
+            "framework": "NIST CSF",
+            "control_id": "PR.PS-01",
+            "title": "Endpoint protection"
+          },
+          "gap_to_risk_story": {
+            "question_id": "Q2",
+            "gap_story": "",
+            "business_meaning": "",
+            "risk_logic": "",
+            "control_logic": "",
+            "resilience_logic": "",
+            "residual_conclusion": ""
+          }
+        }
+      ],
+      "overall_conclusion": ""
+    },
     "snapshot_ready": false,
     "source_question_ids": []
   },
@@ -343,6 +374,9 @@ The UI renders `steps` vertically. Each step includes input, process, and output
 inspect what was called, what was sent to the selected model, and what came back. The intended
 display contract is that a step output becomes the next step input. Where the workflow branches
 over multiple weak questionnaire answers, explicit selection/storage handoff steps keep that chain
+readable. `storyline_report` is the human-readable report view and is assembled from the same
+accepted `business_storylines` stored in the JSON contract, so browser text and API data stay
+aligned.
 visible. Every preview block can be expanded into a separate inspection window without changing the
 running workflow.
 

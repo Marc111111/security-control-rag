@@ -622,6 +622,7 @@
             <div class="panel-title">Final Result Contract</div>
             <div class="header-actions">
               <button class="secondary small" id="expandFinal" disabled>Expand</button>
+              <button class="secondary small" id="storylineReport" disabled>Storyline report</button>
               <button class="secondary small" id="codexReview" disabled>Open Codex review packet</button>
             </div>
           </div>
@@ -657,6 +658,7 @@
       const workflowEl = document.querySelector("#workflow");
       const finalEl = document.querySelector("#finalResult");
       const expandFinalEl = document.querySelector("#expandFinal");
+      const storylineReportEl = document.querySelector("#storylineReport");
       const codexReviewEl = document.querySelector("#codexReview");
       const costEstimateEl = document.querySelector("#costEstimate");
       const runsEl = document.querySelector("#runs");
@@ -1290,9 +1292,44 @@
         openTextWindow("Final Result Contract", JSON.stringify(lastCompletedRun.final_result, null, 2));
       }
 
+      function openStorylineReport() {
+        if (!lastCompletedRun) return;
+        openTextWindow("Business Storyline Report", formatStorylineReport(lastCompletedRun.final_result || {}));
+      }
+
       function openCodexReviewPacket() {
         if (!lastCompletedRun) return;
         openTextWindow("Codex Review Packet", buildCodexReviewPacket(lastCompletedRun));
+      }
+
+      function formatStorylineReport(finalResult) {
+        const report = finalResult.storyline_report || finalResult.draft_sections?.storyline_report || {};
+        const lines = [
+          report.title || "Gap-to-risk storyline report",
+          "",
+          report.purpose || "Shows how each weak questionnaire answer became a risk analysis.",
+          "",
+        ];
+        const rows = Array.isArray(report.per_gap) ? report.per_gap : [];
+        if (!rows.length) {
+          lines.push("[No storyline report stored in this run.]");
+          return lines.join("\n");
+        }
+        rows.forEach((row, index) => {
+          const story = row.gap_to_risk_story || {};
+          const control = row.linked_control || {};
+          lines.push(`${index + 1}. ${row.question_id || story.question_id || "Question"} - ${control.framework || ""} ${control.control_id || ""} ${control.title || ""}`.trim());
+          lines.push(`Gap: ${story.gap_story || "n/a"}`);
+          lines.push(`Business meaning: ${story.business_meaning || "n/a"}`);
+          lines.push(`Risk logic: ${story.risk_logic || "n/a"}`);
+          lines.push(`Control logic: ${story.control_logic || "n/a"}`);
+          lines.push(`Resilience: ${story.resilience_logic || "n/a"}`);
+          lines.push(`Residual conclusion: ${story.residual_conclusion || "n/a"}`);
+          lines.push("");
+        });
+        lines.push("Overall conclusion:");
+        lines.push(report.overall_conclusion || "n/a");
+        return lines.join("\n");
       }
 
       function buildCodexReviewPacket(run) {
@@ -1518,6 +1555,7 @@
             <td>${escapeHtml(formatDuration(run.duration_seconds))}</td>
             <td class="run-actions">
               <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'summary')">View</button>
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'storyline')">Storyline</button>
               <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'json')">JSON</button>
             </td>
           </tr>`;
@@ -1569,14 +1607,20 @@
           openTextWindow(`Saved run JSON - ${runId}`, JSON.stringify(run, null, 2));
           return;
         }
+        if (mode === "storyline") {
+          openTextWindow(`Saved run storyline - ${runId}`, formatStorylineReport(run.final_result || {}));
+          return;
+        }
         openTextWindow(`Saved run summary - ${runId}`, savedRunSummary(run));
       }
 
       function savedRunSummary(run) {
         const result = run.final_result || {};
-        const summary = result.management_summary || result.summary || "";
-        const exposure = result.risk_exposure || "";
-        const conclusion = result.conclusion || "";
+        const sections = result.draft_sections || result;
+        const summary = sections.management_summary || result.management_summary || result.summary || "";
+        const exposure = sections.risk_exposure || result.risk_exposure || "";
+        const conclusion = sections.conclusion || result.conclusion || "";
+        const storyline = formatStorylineReport(result);
         const lines = [
           `Run: ${run.run_id}`,
           `Created: ${run.created_at || "n/a"}`,
@@ -1593,6 +1637,9 @@
           "",
           "Conclusion:",
           conclusion || "[No conclusion paragraph stored in this run.]",
+          "",
+          "Storyline report:",
+          storyline,
         ];
         return lines.join("\n");
       }
@@ -1612,6 +1659,7 @@
       function updateFinalActions() {
         const enabled = Boolean(lastCompletedRun);
         expandFinalEl.disabled = !enabled;
+        storylineReportEl.disabled = !enabled;
         codexReviewEl.disabled = !enabled;
       }
 
@@ -1627,6 +1675,7 @@
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       expandFinalEl.addEventListener("click", expandFinalResult);
+      storylineReportEl.addEventListener("click", openStorylineReport);
       codexReviewEl.addEventListener("click", openCodexReviewPacket);
       closeFailureEl.addEventListener("click", closeFailureModal);
       failureModalEl.addEventListener("click", (event) => {
