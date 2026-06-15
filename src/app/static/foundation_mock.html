@@ -429,6 +429,7 @@
           <textarea id="packet"></textarea>
         </div>
         <div class="actions">
+          <button class="secondary" id="refreshEstimate">Refresh estimate</button>
           <button id="run">Run Complete Workflow</button>
           <button class="secondary" id="cancel" disabled>Cancel Run</button>
           <button class="secondary" id="refreshRuns">Refresh Saved Runs</button>
@@ -483,6 +484,8 @@
       let pollTimer = null;
       let lastPreflight = null;
       let lastCompletedRun = null;
+      let runHistory = [];
+      let dbFormDirty = false;
       let previewCounter = 0;
       const previewStore = new Map();
 
@@ -570,16 +573,23 @@
           </div>`;
       }
 
-      function applyDbFormToPacket() {
+      function applyDbFormToPacket(options = {}) {
+        const clear = options.clear !== false;
+        const updateStatus = options.updateStatus !== false;
         const packet = currentPacket();
         document.querySelectorAll("[data-field]").forEach((input) => {
           setPacketField(packet, input.dataset.field, input.value);
         });
         packetEl.value = JSON.stringify(packet, null, 2);
         renderDbForm(packet);
-        clearOutput();
-        statusEl.textContent = "Applied simulated DB form changes to the workflow JSON.";
+        dbFormDirty = false;
+        if (clear) clearOutput();
+        if (updateStatus) statusEl.textContent = "Applied simulated DB form changes to the workflow JSON.";
         return packet;
+      }
+
+      function syncDirtyDbForm() {
+        if (dbFormDirty) applyDbFormToPacket({ clear: false, updateStatus: false });
       }
 
       function setPacketField(packet, path, value) {
@@ -638,6 +648,7 @@
       }
 
       function requestBody() {
+        syncDirtyDbForm();
         const model = {
           provider: providerEl.value,
           model: modelEl.value,
@@ -663,7 +674,7 @@
         try {
           setBusy(true, "Checking workflow size before model calls...");
           const body = requestBody();
-          const preflight = await postJson("/api/workflows/complete-assessment/preflight", body);
+          const preflight = await loadPreflight(body);
           renderPreflight(preflight);
           if (preflight.will_exceed_guard) {
             throw new Error(`Preflight blocked: estimated input tokens ${preflight.estimated_input_tokens} exceed guard ${preflight.max_estimated_input_tokens}`);
@@ -680,6 +691,25 @@
           stopPolling();
           setBusy(false);
         }
+      }
+
+      async function refreshEstimate() {
+        try {
+          setBusy(true, "Refreshing estimate for the current input...");
+          const preflight = await loadPreflight(requestBody());
+          renderPreflight(preflight);
+          statusEl.textContent = preflight.will_exceed_guard
+            ? "Estimate refreshed. This run would be blocked by the current token guard."
+            : "Estimate refreshed for the current input. No model call was made.";
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadPreflight(body) {
+        return postJson("/api/workflows/complete-assessment/preflight", body);
       }
 
       async function cancelWorkflow() {
@@ -746,6 +776,7 @@
           metric("Est. one-run price", costLabel(data.cost_estimate)),
           metric("Tokens actual/est.", tokenComparisonLabel(data.token_budget)),
           metric("Token cap", data.token_budget?.allowed_total_tokens ?? "n/a"),
+          metric("Duration", formatDuration(data.duration_seconds)),
         ].join("");
         setWorkflowHtml(data.steps.map((step, index) => renderStep(step, index)).join(""));
         finalEl.textContent = JSON.stringify(data.final_result, null, 2);
@@ -768,7 +799,7 @@
 
       function renderPreflightStep(data) {
         const description = "This checks the likely size and cost of the workflow before any AI model is called.";
-        return `<details class="step" open>
+        return `<details class="step">
           ${renderStepSummary("0", "Preflight estimate", description, "Python deterministic workflow")}
           <div class="step-body">
             <div class="triptych">
@@ -793,6 +824,8 @@
           metric("Provider", job.provider),
           metric("Model", job.model),
           metric("Token cap", job.preflight?.allowed_total_tokens ?? "n/a"),
+          metric("Elapsed", formatDuration(elapsedSeconds(job.created_at))),
+          metric("ETA", etaLabel(job)),
           metric("Current step", job.current_step || "Starting"),
         ].join("");
         if (job.status !== "completed") {
@@ -803,7 +836,7 @@
 
       function renderJobStep(job, number) {
         const description = jobDescription(job.status);
-        return `<details class="step" open>
+        return `<details class="step">
             ${renderStepSummary(number, "Background workflow job", description, job.status)}
             <div class="step-body">
               <div class="triptych">
@@ -823,7 +856,7 @@
 
       function renderStep(step, index) {
         const description = friendlyStepDescription(step.name, step.explanation);
-        return `<details class="step"${index === 0 ? " open" : ""}>
+        return `<details class="step">
           ${renderStepSummary(index + 1, step.name, description, step.tool)}
           <div class="step-body">
             <div class="triptych">
@@ -863,7 +896,7 @@
         if (job.status === "cancelled") return "The workflow was stopped before producing a final result.";
         if (job.status === "failed") return "The workflow stopped because one of the steps failed. Check the output block for the error.";
         if (job.status === "cancelling") return "The workflow is stopping now. The local model is being asked to unload from the GPU.";
-        return `The workflow is still running. The last completed step is: ${job.current_step || "none yet"}. This page will keep polling until the job finishes, fails, or is cancelled.`;
+        return `The workflow is still running. Current activity: ${job.current_step || "starting"}. This page will keep polling until the job finishes, fails, or is cancelled.`;
       }
 
       function friendlyStepDescription(name, fallback) {
@@ -891,17 +924,18 @@
       }
 
       function preview(title, value) {
-        const rawText = value === undefined
-          ? "[No output returned by this step]"
+        const rawText = value === undefined || value === null
+          ? "[No data supplied for this part of the step]"
           : typeof value === "string"
             ? value
             : JSON.stringify(value, null, 2);
-        const text = rawText || "[No output returned by this step]";
+        const text = rawText || "[No data supplied for this part of the step]";
         const previewId = `preview-${++previewCounter}`;
         previewStore.set(previewId, { title, text });
         const summary = `<summary><span>${escapeHtml(title)}</span><button class="preview-expand" type="button" onclick="openPreview('${previewId}', event)">Expand</button></summary>`;
         if (text.length > 9000) {
-          return `<details class="preview">${summary}<pre>Large output (${text.length} chars). Use Expand to inspect it in a separate window.</pre></details>`;
+          const inlinePreview = `${text.slice(0, 1200)}\n\n...[large value: ${text.length} characters. Use Expand to inspect the full content in a separate window.]`;
+          return `<details class="preview" open>${summary}<pre>${escapeHtml(inlinePreview)}</pre></details>`;
         }
         return `<details class="preview" open>${summary}<pre>${escapeHtml(text)}</pre></details>`;
       }
@@ -1038,6 +1072,46 @@
         return `$${usd.toFixed(6)} / EUR ${eur.toFixed(6)}`;
       }
 
+      function etaLabel(job) {
+        if (!job || !["queued", "running", "cancelling"].includes(job.status)) return "n/a";
+        const estimate = historicalDurationEstimate(job.provider, job.model);
+        if (!estimate) return "No run history yet";
+        const elapsed = elapsedSeconds(job.created_at);
+        const remaining = Math.max(0, estimate - elapsed);
+        return `${formatDuration(remaining)} left (${formatDuration(estimate)} typical)`;
+      }
+
+      function historicalDurationEstimate(provider, model) {
+        const validRuns = runHistory.filter((run) => Number(run.duration_seconds) > 0);
+        const sameModel = validRuns.filter((run) => run.provider === provider && run.model === model);
+        const sample = sameModel.length ? sameModel : validRuns;
+        if (!sample.length) return null;
+        return median(sample.map((run) => Number(run.duration_seconds)));
+      }
+
+      function median(values) {
+        const sorted = values.slice().sort((left, right) => left - right);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2
+          ? sorted[middle]
+          : (sorted[middle - 1] + sorted[middle]) / 2;
+      }
+
+      function elapsedSeconds(startedAt) {
+        const started = Date.parse(startedAt || "");
+        if (Number.isNaN(started)) return 0;
+        return Math.max(0, (Date.now() - started) / 1000);
+      }
+
+      function formatDuration(seconds) {
+        const value = Number(seconds);
+        if (!Number.isFinite(value) || value <= 0) return "0s";
+        const rounded = Math.round(value);
+        const minutes = Math.floor(rounded / 60);
+        const rest = rounded % 60;
+        return minutes ? `${minutes}m ${rest}s` : `${rest}s`;
+      }
+
       function setWorkflowHtml(html) {
         const previousState = detailsState();
         workflowEl.innerHTML = html;
@@ -1076,6 +1150,7 @@
 
       async function refreshRuns() {
         const runs = await getJson("/api/workflows/complete-assessment/runs");
+        runHistory = runs;
         runsEl.textContent = JSON.stringify(runs, null, 2);
       }
 
@@ -1085,6 +1160,7 @@
         });
         document.querySelector("#cancel").disabled = !busy || !currentJobId;
         document.querySelector("#run").disabled = busy;
+        document.querySelector("#refreshEstimate").disabled = busy;
         document.querySelector("#refreshRuns").disabled = busy;
         if (!busy) updateFinalActions();
         if (text) statusEl.textContent = text;
@@ -1101,6 +1177,7 @@
       }
 
       providerEl.addEventListener("change", configureModels);
+      document.querySelector("#refreshEstimate").addEventListener("click", refreshEstimate);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       expandFinalEl.addEventListener("click", expandFinalResult);
@@ -1128,11 +1205,15 @@
       });
       packetEl.addEventListener("change", () => {
         try {
+          dbFormDirty = false;
           renderDbForm(currentPacket());
           statusEl.textContent = "Updated the optional form from the JSON.";
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         }
+      });
+      dbFormEl.addEventListener("input", () => {
+        dbFormDirty = true;
       });
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
       configureModels();

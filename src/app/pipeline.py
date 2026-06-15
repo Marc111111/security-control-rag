@@ -116,8 +116,11 @@ class GraphRagPipeline:
         ]
         | None = None,
         token_budget_guard: Callable[[str, list[dict[str, str]]], None] | None = None,
+        status_callback: Callable[[str], None] | None = None,
     ) -> tuple[GraphRagAnswer, list[dict[str, Any]]]:
         full_question = _merge_question_context(question, context)
+        if status_callback is not None:
+            status_callback(f"Planning standards searches for {trace_label}")
         plan = self.planner.plan(full_question)
         effective_top_k = top_k or self.settings.top_k
         plan_output = {
@@ -141,6 +144,8 @@ class GraphRagPipeline:
                 "output": plan_output,
             }
         ]
+        if status_callback is not None:
+            status_callback(f"Searching standards evidence for {trace_label}")
         evidence, graph_rows = self._retriever().retrieve(
             plan,
             top_k=effective_top_k,
@@ -186,6 +191,8 @@ class GraphRagPipeline:
                 }
             )
             return answer, trace_steps
+        if status_callback is not None:
+            status_callback(f"Preparing model prompt for {trace_label}")
         messages = build_structured_answer_prompt(full_question, plan, evidence, graph_rows)
         prompt_output = {
             "messages_sent_to_model": messages,
@@ -211,7 +218,11 @@ class GraphRagPipeline:
         call_name = f"Risk answer model call for {trace_label}"
         if token_budget_guard is not None:
             token_budget_guard(call_name, messages)
+        if status_callback is not None:
+            status_callback(f"Waiting for model risk answer for {trace_label}")
         raw = self.chat_model.chat(messages)
+        if status_callback is not None:
+            status_callback(f"Parsing model risk answer for {trace_label}")
         token_usage = (
             token_usage_callback(
                 call_name,

@@ -290,6 +290,8 @@ Response:
 {
   "run_id": "run-...",
   "created_at": "2026-06-14T...",
+  "completed_at": "2026-06-14T...",
+  "duration_seconds": 42.3,
   "assessment_id": "A-100",
   "vendor_id": "V-1",
   "provider": "ollama",

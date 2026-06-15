@@ -208,6 +208,7 @@ class CompleteAssessmentWorkflow:
         *,
         cancel_event: threading.Event | None = None,
         progress_callback: Callable[[WorkflowStep], None] | None = None,
+        status_callback: Callable[[str], None] | None = None,
     ) -> dict[str, Any]:
         _validate_model_selection(request.model)
         packet, input_source = _resolve_input_source(request)
@@ -235,6 +236,10 @@ class CompleteAssessmentWorkflow:
             steps.append(step)
             if progress_callback is not None:
                 progress_callback(step)
+
+        def set_status(name: str) -> None:
+            if status_callback is not None:
+                status_callback(name)
 
         def record_model_call(
             call_name: str,
@@ -364,6 +369,7 @@ class CompleteAssessmentWorkflow:
                     model_label=f"{request.model.provider}:{request.model.model}",
                     token_usage_callback=record_model_call,
                     token_budget_guard=assert_model_call_budget,
+                    status_callback=set_status,
                 )
                 for trace_step in trace_steps:
                     _raise_if_cancelled(cancel_event)
@@ -440,7 +446,9 @@ class CompleteAssessmentWorkflow:
                 "api_key": "[hidden]",
             }
             _raise_if_cancelled(cancel_event)
+            set_status("Waiting for model to draft report paragraphs")
             raw_paragraphs = selected_chat_model.chat(paragraph_messages)
+            set_status("Parsing model-drafted report paragraphs")
             paragraph_token_usage = record_model_call(
                 "Report paragraph model call",
                 paragraph_messages,
@@ -503,6 +511,7 @@ class CompleteAssessmentWorkflow:
             run = {
                 "run_id": run_id,
                 "created_at": created_at,
+                "completed_at": datetime.now(UTC).isoformat(),
                 "assessment_id": packet.assessment_id,
                 "vendor_id": packet.vendor.vendor_id,
                 "provider": request.model.provider,
@@ -513,6 +522,13 @@ class CompleteAssessmentWorkflow:
                 "steps": [step.as_dict() for step in steps],
                 "final_result": final_result,
             }
+            run["duration_seconds"] = round(
+                (
+                    datetime.fromisoformat(run["completed_at"])
+                    - datetime.fromisoformat(created_at)
+                ).total_seconds(),
+                3,
+            )
             path = self.run_store.save(run)
             run["run_path"] = str(path)
             return run

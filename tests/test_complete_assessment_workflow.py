@@ -165,11 +165,14 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     ]
     assert body["token_budget"]["calls"]
     assert body["token_budget"]["calls"][0]["source"] == "rough_estimate"
+    assert body["duration_seconds"] >= 0
+    assert body["completed_at"]
     assert Path(body["run_path"]).exists()
 
     runs_response = client.get("/api/workflows/complete-assessment/runs")
     assert runs_response.status_code == 200
     assert runs_response.json()[0]["run_id"] == body["run_id"]
+    assert runs_response.json()[0]["duration_seconds"] == body["duration_seconds"]
 
 
 def test_complete_assessment_rejects_openai_without_confirmation(

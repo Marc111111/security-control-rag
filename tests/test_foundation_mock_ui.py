@@ -14,9 +14,14 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "gpt-5.4-mini" in response.text
     assert "qwen3:14b" in response.text
     assert "OpenAI API key for this request only" in response.text
+    assert "Refresh estimate" in response.text
     assert "Token guard tolerance (+/- %)" in response.text
     assert "Enforce token guard" in response.text
     assert "Est. one-run price" in response.text
+    assert "ETA" in response.text
+    assert "No run history yet" in response.text
+    assert "historicalDurationEstimate" in response.text
+    assert "syncDirtyDbForm" in response.text
     assert "Open Codex review packet" in response.text
     assert "buildCodexReviewPacket" in response.text
     assert "Development-only independent quality review" in response.text

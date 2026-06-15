@@ -262,3 +262,9 @@ opens a separate closeable window containing the initial input, run metadata, wo
 final result, and review rubric so the user can paste it into Codex for an honest quality review.
 Do not represent this as an automatic Codex API call unless a real authorized Codex review API is
 added later.
+
+The workflow UI must not force-open workflow step tabs while polling. New step tabs should be
+created closed, and existing open/closed state should be preserved. The left metrics area includes a
+manual "Refresh estimate" button that preflights the current edited input without model calls, and
+an ETA during running jobs based on median duration from previous completed saved runs. If no saved
+duration history exists, show that honestly.

@@ -112,6 +112,7 @@ class WorkflowJobManager:
                 job.request,
                 cancel_event=job.cancel_event,
                 progress_callback=lambda step: self._add_progress_step(job, step.as_dict()),
+                status_callback=lambda status: self._set_current_step(job, status),
             )
         except WorkflowCancelled as exc:
             self._update(job, status="cancelled", error=str(exc))
@@ -150,6 +151,11 @@ class WorkflowJobManager:
         with self.lock:
             job.partial_steps.append(step)
             job.current_step = step.get("name")
+            job.updated_at = _now()
+
+    def _set_current_step(self, job: WorkflowJob, step_name: str) -> None:
+        with self.lock:
+            job.current_step = step_name
             job.updated_at = _now()
 
 

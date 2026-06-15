@@ -35,6 +35,8 @@ class WorkflowRunStore:
                     "assessment_id": data.get("assessment_id"),
                     "vendor_id": data.get("vendor_id"),
                     "price": data.get("cost_estimate", {}).get("estimated_cost_usd"),
+                    "duration_seconds": data.get("duration_seconds"),
+                    "completed_at": data.get("completed_at"),
                 }
             )
         return runs
@@ -44,4 +46,3 @@ class WorkflowRunStore:
         if not path.exists():
             raise FileNotFoundError(run_id)
         return json.loads(path.read_text(encoding="utf-8"))
-
