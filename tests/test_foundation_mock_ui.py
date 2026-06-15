@@ -20,6 +20,11 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "askCorpus" in response.text
     assert "corpusQuestion" in response.text
     assert "Direct Corpus Query Result" in response.text
+    assert "scrollbar-gutter: stable" in response.text
+    assert "overflow-y: auto" in response.text
+    assert "min-width: 0" in response.text
+    assert "minmax(380px, .95fr)" in response.text
+    assert "@media (max-width: 860px)" in response.text
     assert "Token guard +/- %" in response.text
     assert "Enforce token guard" in response.text
     assert "Est. one-run price" in response.text
