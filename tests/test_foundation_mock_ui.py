@@ -14,6 +14,10 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "gpt-5.4-mini" in response.text
     assert "qwen3:14b" in response.text
     assert "OpenAI API key (run only)" in response.text
+    assert "Save key" in response.text
+    assert "Forget key" in response.text
+    assert "/api/local/openai-key" in response.text
+    assert "External calls remain disabled" in response.text
     assert "Estimate cost" in response.text
     assert "Ask Standards Corpus" in response.text
     assert "/api/query" in response.text
@@ -43,8 +47,10 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "openSavedRun" in response.text
     assert "Saved run summary" in response.text
     assert "syncDirtyDbForm" in response.text
-    assert "Open Codex review packet" in response.text
-    assert "Storyline report" in response.text
+    assert "Codex review packet" in response.text
+    assert "Result Summary And Saved Runs" in response.text
+    assert "currentRunActions" in response.text
+    assert "Final Result Contract" not in response.text
     assert "formatStorylineReport" in response.text
     assert "Saved run storyline" in response.text
     assert "buildCodexReviewPacket" in response.text
@@ -58,12 +64,9 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text
-    assert "openPacketEditorWindow" in response.text
     assert "openPacketWindow" in response.text
     assert "packet-state" in response.text
-    assert "json-modal" in response.text
-    assert "packetModalText" in response.text
-    assert "Apply to workflow" in response.text
+    assert 'href="/mock/foundation/packet-editor"' in response.text
     assert '<textarea id="packet"></textarea>' not in response.text
     assert "Optional simulated DB input form" in response.text
     assert "business context manifest" in response.text
@@ -71,6 +74,40 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Save scenario" in response.text
     assert "openPreview" in response.text
     assert "Expand" in response.text
+
+
+def test_foundation_packet_editor_ui_is_served() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/mock/foundation/packet-editor")
+
+    assert response.status_code == 200
+    assert "Simulated SQL Result JSON" in response.text
+    assert "Save for workflow" in response.text
+    assert "Reset initial content" in response.text
+    assert "foundationMock.savedDbScenario" in response.text
+
+
+def test_local_openai_key_cache_lifecycle() -> None:
+    client = TestClient(create_app())
+
+    try:
+        assert client.delete("/api/local/openai-key").json() == {"has_key": False}
+        empty = client.get("/api/local/openai-key").json()
+        assert empty == {"has_key": False, "api_key": ""}
+
+        saved = client.post("/api/local/openai-key", json={"api_key": " sk-test-local "})
+        assert saved.status_code == 200
+        assert saved.json() == {"has_key": True}
+        loaded = client.get("/api/local/openai-key").json()
+        assert loaded == {"has_key": True, "api_key": "sk-test-local"}
+
+        forgotten = client.delete("/api/local/openai-key")
+        assert forgotten.status_code == 200
+        assert forgotten.json() == {"has_key": False}
+        assert client.get("/api/local/openai-key").json() == {"has_key": False, "api_key": ""}
+    finally:
+        client.delete("/api/local/openai-key")
 
 
 def test_foundation_business_context_manifest_is_served() -> None:

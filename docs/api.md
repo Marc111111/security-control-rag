@@ -60,6 +60,13 @@ calls this endpoint directly. It is intentionally separate from the full questio
 workflow, so it can be used to test how the configured GraphRAG service model answers an ad hoc
 standards question without running the simulated PostgreSQL-to-report chain.
 
+## Local OpenAI Key Cache
+
+`GET /api/local/openai-key`, `POST /api/local/openai-key`, and `DELETE /api/local/openai-key`
+support the development UI's local key cache. The key is stored on the local machine under
+`storage/local/openai_api_key.txt`, which is ignored by Git. A cached key only pre-fills the UI
+field; external model calls must still be explicitly enabled per run.
+
 ## Advanced GraphRAG Ingestion
 
 `POST /api/ingest`

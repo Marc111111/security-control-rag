@@ -80,7 +80,7 @@
       .panel-body { padding: 14px; overflow: auto; }
       .workflow-panel {
         min-height: 0;
-        flex: 1 1 58%;
+        flex: 1 1 62%;
         display: flex;
         flex-direction: column;
       }
@@ -90,8 +90,8 @@
         overflow: auto;
       }
       .result-panel {
-        flex: 0 0 min(24vh, 260px);
-        min-height: 150px;
+        flex: 1 1 38%;
+        min-height: 210px;
         display: flex;
         flex-direction: column;
       }
@@ -148,6 +148,16 @@
         min-height: 20px;
         font-size: 10px;
         gap: 5px;
+      }
+      .config-panel.compact-config .key-actions {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .config-panel.compact-config .key-actions .status {
+        font-size: 10px;
       }
       .config-panel.compact-config .estimate-panel {
         margin: 6px 0 0;
@@ -311,42 +321,6 @@
         padding: 8px;
       }
       .technical-details summary { cursor: pointer; font-weight: 700; }
-      .json-modal {
-        position: fixed;
-        inset: 0;
-        z-index: 45;
-        display: none;
-        align-items: stretch;
-        justify-content: center;
-        padding: 18px;
-        background: rgba(29, 39, 48, .42);
-      }
-      .json-modal.open { display: flex; }
-      .json-modal:target { display: flex; }
-      .json-box {
-        width: min(1180px, 98vw);
-        min-height: 0;
-        display: flex;
-        flex-direction: column;
-        background: #fff;
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        box-shadow: 0 18px 60px rgba(29, 39, 48, .24);
-        overflow: hidden;
-      }
-      .json-box textarea {
-        min-height: 0;
-        flex: 1 1 auto;
-        resize: none;
-        border-top: 1px solid var(--line);
-      }
-      .json-window-status {
-        min-height: 30px;
-        padding: 7px 12px;
-        color: var(--muted);
-        font-size: 12px;
-        background: #fbfcfa;
-      }
       .estimate-note {
         margin-top: 4px;
         color: var(--muted);
@@ -601,6 +575,31 @@
         color: var(--muted);
         line-height: 1.4;
       }
+      .current-result-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+        margin-bottom: 10px;
+        padding: 9px;
+        border: 1px solid #d4e4e0;
+        border-radius: 8px;
+        background: var(--soft);
+      }
+      .current-result-actions strong {
+        margin-right: auto;
+        color: #25313d;
+        font-size: 12px;
+      }
+      .current-result-actions.empty {
+        display: block;
+        margin-bottom: 10px;
+        padding: 10px;
+      }
+      .current-result-actions button {
+        padding: 5px 7px;
+        font-size: 11px;
+      }
       .runs-table {
         width: 100%;
         border-collapse: collapse;
@@ -703,6 +702,11 @@
                 <input type="checkbox" id="enforceTokenBudget" checked />
                 Enforce token guard
               </label>
+              <div class="key-actions">
+                <button class="secondary small" id="saveApiKey" type="button">Save key</button>
+                <button class="secondary small" id="forgetApiKey" type="button">Forget key</button>
+                <span class="status" id="apiKeyStatus">Key not loaded.</span>
+              </div>
             </div>
             <div class="estimate-panel">
               <div class="estimate-header">
@@ -719,8 +723,8 @@
           </div>
         </div>
         <div class="actions compact-actions">
-          <a class="button-like secondary" id="openPacketWindow" href="#packetModal">Simulated SQL Result JSON</a>
-          <button class="secondary" id="reset" type="button">Reset input</button>
+          <a class="button-like secondary" id="openPacketWindow" href="/mock/foundation/packet-editor" target="_blank" rel="noreferrer">Simulated SQL Result JSON</a>
+          <button class="secondary" id="reset" type="button" onclick="resetPacketToSample()">Reset input</button>
         </div>
         <textarea class="packet-state" id="packet" hidden></textarea>
         <div class="panel corpus-chat">
@@ -767,19 +771,11 @@
           <div class="panel-body"><div class="workflow" id="workflow"><div class="empty">No run yet.</div></div></div>
         </div>
         <div class="panel result-panel">
-          <div class="panel-header">
-            <div class="panel-title">Final Result Contract</div>
-            <div class="header-actions">
-              <button class="secondary small" id="expandFinal" disabled>Expand</button>
-              <button class="secondary small" id="storylineReport" disabled>Storyline report</button>
-              <button class="secondary small" id="codexReview" disabled>Open Codex review packet</button>
-            </div>
+          <div class="panel-header"><div class="panel-title">Result Summary And Saved Runs</div></div>
+          <div class="panel-body">
+            <div id="currentRunActions" class="current-result-actions empty">No current run result yet.</div>
+            <div class="runs-view" id="runs"></div>
           </div>
-          <div class="panel-body"><pre id="finalResult"></pre></div>
-        </div>
-        <div class="panel result-panel">
-          <div class="panel-header"><div class="panel-title">Saved Comparison Runs</div></div>
-          <div class="panel-body"><div class="runs-view" id="runs"></div></div>
         </div>
       </section>
     </main>
@@ -792,21 +788,6 @@
         <div class="failure-body" id="failureBody"></div>
       </div>
     </div>
-    <div class="json-modal" id="packetModal" role="dialog" aria-modal="true" aria-labelledby="packetModalTitle">
-      <div class="json-box">
-        <div class="failure-head">
-          <strong id="packetModalTitle">Simulated SQL Result JSON</strong>
-          <div class="actions">
-            <button id="applyPacketJson" type="button">Apply to workflow</button>
-            <button class="secondary" id="formatPacketJson" type="button">Format</button>
-            <button class="secondary" id="resetPacketJson" type="button">Reset initial content</button>
-            <button class="secondary small" id="closePacketJson" type="button">Close</button>
-          </div>
-        </div>
-        <div class="json-window-status" id="packetModalStatus">Viewing the same input packet used by the workflow.</div>
-        <textarea id="packetModalText" spellcheck="false"></textarea>
-      </div>
-    </div>
     <script>
       const models = {
         ollama: ["qwen3:14b", "gemma3:4b"],
@@ -815,15 +796,15 @@
       const providerEl = document.querySelector("#provider");
       const modelEl = document.querySelector("#model");
       const keyEl = document.querySelector("#apiKey");
+      const apiKeyStatusEl = document.querySelector("#apiKeyStatus");
+      const saveApiKeyEl = document.querySelector("#saveApiKey");
+      const forgetApiKeyEl = document.querySelector("#forgetApiKey");
       const confirmEl = document.querySelector("#confirmExternal");
       const tokenToleranceEl = document.querySelector("#tokenTolerance");
       const enforceTokenBudgetEl = document.querySelector("#enforceTokenBudget");
       const packetEl = document.querySelector("#packet");
       const workflowEl = document.querySelector("#workflow");
-      const finalEl = document.querySelector("#finalResult");
-      const expandFinalEl = document.querySelector("#expandFinal");
-      const storylineReportEl = document.querySelector("#storylineReport");
-      const codexReviewEl = document.querySelector("#codexReview");
+      const currentRunActionsEl = document.querySelector("#currentRunActions");
       const costEstimateEl = document.querySelector("#costEstimate");
       const runsEl = document.querySelector("#runs");
       const metricsEl = document.querySelector("#metrics");
@@ -837,13 +818,6 @@
       const corpusStatusEl = document.querySelector("#corpusStatus");
       const corpusAnswerEl = document.querySelector("#corpusAnswer");
       const expandCorpusAnswerEl = document.querySelector("#expandCorpusAnswer");
-      const packetModalEl = document.querySelector("#packetModal");
-      const packetModalTextEl = document.querySelector("#packetModalText");
-      const packetModalStatusEl = document.querySelector("#packetModalStatus");
-      const applyPacketJsonEl = document.querySelector("#applyPacketJson");
-      const formatPacketJsonEl = document.querySelector("#formatPacketJson");
-      const resetPacketJsonEl = document.querySelector("#resetPacketJson");
-      const closePacketJsonEl = document.querySelector("#closePacketJson");
       const savedScenarioKey = "foundationMock.savedDbScenario";
       let sample = null;
       let currentJobId = null;
@@ -873,7 +847,6 @@
         sample = await getJson("/api/mock/foundation-packet");
         const saved = loadSavedScenario();
         packetEl.value = JSON.stringify(saved || sample, null, 2);
-        syncPacketEditorText();
         renderDbForm(currentPacket());
         clearOutput();
       }
@@ -898,7 +871,6 @@
       function applyPacketJson(text, message = "Updated workflow input from the JSON editor.") {
         const parsed = JSON.parse(text);
         packetEl.value = JSON.stringify(parsed, null, 2);
-        syncPacketEditorText();
         dbFormDirty = false;
         renderDbForm(parsed);
         clearOutput();
@@ -909,7 +881,6 @@
 
       function resetPacketToSample(message = "Reset simulated DB input to the initial sample.") {
         packetEl.value = JSON.stringify(sample, null, 2);
-        syncPacketEditorText();
         window.localStorage.removeItem(savedScenarioKey);
         renderDbForm(sample);
         clearOutput();
@@ -984,7 +955,6 @@
           setPacketField(packet, input.dataset.field, input.value);
         });
         packetEl.value = JSON.stringify(packet, null, 2);
-        syncPacketEditorText();
         renderDbForm(packet);
         dbFormDirty = false;
         if (clear) clearOutput();
@@ -1049,6 +1019,55 @@
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || response.statusText);
         return data;
+      }
+
+      async function deleteJson(url) {
+        const response = await fetch(url, { method: "DELETE" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || response.statusText);
+        return data;
+      }
+
+      async function loadLocalOpenAiKey() {
+        confirmEl.checked = false;
+        try {
+          const data = await getJson("/api/local/openai-key");
+          if (data.has_key && data.api_key) {
+            keyEl.value = data.api_key;
+            apiKeyStatusEl.textContent = "Saved key loaded. External calls remain disabled.";
+          } else {
+            keyEl.value = "";
+            apiKeyStatusEl.textContent = "No saved key.";
+          }
+        } catch (error) {
+          apiKeyStatusEl.textContent = "Could not read saved key.";
+        }
+      }
+
+      async function saveLocalOpenAiKey() {
+        const apiKey = keyEl.value.trim();
+        if (!apiKey) {
+          apiKeyStatusEl.innerHTML = `<span class="warning">Enter a key first.</span>`;
+          return;
+        }
+        try {
+          await postJson("/api/local/openai-key", { api_key: apiKey });
+          confirmEl.checked = false;
+          apiKeyStatusEl.textContent = "Saved locally. External calls remain disabled.";
+        } catch (error) {
+          apiKeyStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      async function forgetLocalOpenAiKey() {
+        try {
+          await deleteJson("/api/local/openai-key");
+          keyEl.value = "";
+          confirmEl.checked = false;
+          apiKeyStatusEl.textContent = "Saved key deleted.";
+        } catch (error) {
+          apiKeyStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
       }
 
       async function askCorpus() {
@@ -1125,49 +1144,6 @@
       function expandCorpusAnswer() {
         if (!lastCorpusAnswer) return;
         openTextWindow("Direct Corpus Query Result", JSON.stringify(lastCorpusAnswer, null, 2));
-      }
-
-      function syncPacketEditorText() {
-        if (packetModalTextEl) packetModalTextEl.value = packetEl.value;
-      }
-
-      function openPacketEditorWindow() {
-        syncPacketEditorText();
-        packetModalTextEl.value = packetEl.value;
-        packetModalStatusEl.textContent = "Viewing the same input packet used by the workflow.";
-        window.location.hash = "packetModal";
-        packetModalEl.classList.add("open");
-        packetModalTextEl.focus();
-      }
-
-      function closePacketEditorWindow() {
-        packetModalEl.classList.remove("open");
-        if (window.location.hash === "#packetModal") {
-          history.pushState("", document.title, window.location.pathname + window.location.search);
-        }
-      }
-
-      function applyPacketEditorValue() {
-        try {
-          const result = applyPacketJson(packetModalTextEl.value);
-          packetModalStatusEl.textContent = result.message;
-        } catch (error) {
-          packetModalStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
-        }
-      }
-
-      function formatPacketEditorValue() {
-        try {
-          packetModalTextEl.value = JSON.stringify(JSON.parse(packetModalTextEl.value), null, 2);
-          packetModalStatusEl.textContent = "Formatted JSON.";
-        } catch (error) {
-          packetModalStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
-        }
-      }
-
-      function resetPacketEditorValue() {
-        packetModalTextEl.value = JSON.stringify(sample, null, 2);
-        packetModalStatusEl.textContent = "Loaded the initial sample into this editor. Apply to update the workflow.";
       }
 
       function requestBody() {
@@ -1324,7 +1300,6 @@
           metric("Duration", formatDuration(data.duration_seconds)),
         ].join("");
         setWorkflowHtml(data.steps.map((step, index) => renderStep(step, index)).join(""));
-        finalEl.textContent = JSON.stringify(data.final_result, null, 2);
         updateFinalActions();
       }
 
@@ -1630,7 +1605,7 @@
 
       function expandFinalResult() {
         if (!lastCompletedRun) return;
-        openTextWindow("Final Result Contract", JSON.stringify(lastCompletedRun.final_result, null, 2));
+        openTextWindow("Current Run JSON Contract", JSON.stringify(lastCompletedRun.final_result, null, 2));
       }
 
       function openStorylineReport() {
@@ -1856,7 +1831,6 @@
 
       function clearOutput() {
         workflowEl.innerHTML = `<div class="empty">No run yet.</div>`;
-        finalEl.textContent = "";
         lastCompletedRun = null;
         updateFinalActions();
         metricsEl.innerHTML = "";
@@ -1999,9 +1973,18 @@
 
       function updateFinalActions() {
         const enabled = Boolean(lastCompletedRun);
-        expandFinalEl.disabled = !enabled;
-        storylineReportEl.disabled = !enabled;
-        codexReviewEl.disabled = !enabled;
+        if (!enabled) {
+          currentRunActionsEl.className = "current-result-actions empty";
+          currentRunActionsEl.textContent = "No current run result yet.";
+          return;
+        }
+        currentRunActionsEl.className = "current-result-actions";
+        currentRunActionsEl.innerHTML = `
+          <strong>Current run result</strong>
+          <button class="secondary" type="button" onclick="expandFinalResult()">View JSON</button>
+          <button class="secondary" type="button" onclick="openStorylineReport()">Storyline</button>
+          <button class="secondary" type="button" onclick="openCodexReviewPacket()">Codex review packet</button>
+        `;
       }
 
       function escapeHtml(value) {
@@ -2009,20 +1992,18 @@
       }
 
       window.estimateCost = estimateCost;
-      window.openPacketEditorWindow = openPacketEditorWindow;
+      window.expandFinalResult = expandFinalResult;
+      window.openStorylineReport = openStorylineReport;
+      window.openCodexReviewPacket = openCodexReviewPacket;
+      window.resetPacketToSample = resetPacketToSample;
       providerEl.addEventListener("change", configureModels);
       modelEl.addEventListener("change", refreshEstimateOrMarkDirty);
       tokenToleranceEl.addEventListener("input", refreshEstimateOrMarkDirty);
       enforceTokenBudgetEl.addEventListener("change", refreshEstimateOrMarkDirty);
+      saveApiKeyEl.addEventListener("click", saveLocalOpenAiKey);
+      forgetApiKeyEl.addEventListener("click", forgetLocalOpenAiKey);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
-      applyPacketJsonEl.addEventListener("click", applyPacketEditorValue);
-      formatPacketJsonEl.addEventListener("click", formatPacketEditorValue);
-      resetPacketJsonEl.addEventListener("click", resetPacketEditorValue);
-      closePacketJsonEl.addEventListener("click", closePacketEditorWindow);
-      packetModalEl.addEventListener("click", (event) => {
-        if (event.target === packetModalEl) closePacketEditorWindow();
-      });
       askCorpusEl.addEventListener("click", askCorpus);
       expandCorpusAnswerEl.addEventListener("click", expandCorpusAnswer);
       corpusQuestionEl.addEventListener("keydown", (event) => {
@@ -2031,15 +2012,9 @@
           askCorpus();
         }
       });
-      expandFinalEl.addEventListener("click", expandFinalResult);
-      storylineReportEl.addEventListener("click", openStorylineReport);
-      codexReviewEl.addEventListener("click", openCodexReviewPacket);
       closeFailureEl.addEventListener("click", closeFailureModal);
       failureModalEl.addEventListener("click", (event) => {
         if (event.target === failureModalEl) closeFailureModal();
-      });
-      document.querySelector("#reset").addEventListener("click", () => {
-        resetPacketToSample();
       });
       document.querySelector("#applyDbForm").addEventListener("click", () => {
         applyDbFormToPacket();
@@ -2066,6 +2041,7 @@
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
       configureModels();
       loadSample().then(async () => {
+        await loadLocalOpenAiKey();
         await estimateCostQuietly();
         await refreshRuns();
       });

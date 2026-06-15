@@ -115,9 +115,16 @@ grc-graphrag-api
   packet JSON that the workflow sends, can save a browser-local scenario, and can reset to the
   initial sample. Field wording must stay aligned with `docs/business-context.md`.
 - The raw simulated SQL JSON packet is intentionally not shown as a large textarea on the main
-  `/mock/foundation` screen. It is stored in a hidden state textarea and opened through the
-  "Simulated SQL Result JSON" editor-window button to preserve left-panel space for configuration,
-  estimates, chat, and workflow actions.
+  `/mock/foundation` screen. It is stored in hidden workflow state and edited through the
+  `/mock/foundation/packet-editor` page, opened by the "Simulated SQL Result JSON" button, to
+  preserve left-panel space for configuration, estimates, chat, and workflow actions.
+- The old dedicated "Final Result Contract" panel was removed because it duplicated saved/current
+  result views. Current-run JSON/storyline/Codex-review actions now live in the result summary and
+  saved-runs area so screen space is split between workflow trace and result history.
+- `/mock/foundation` can cache an OpenAI API key on local disk through `GET/POST/DELETE
+  /api/local/openai-key`. The cache file is `storage/local/openai_api_key.txt`, which is ignored by
+  Git. Loading a saved key must never enable external calls automatically; the UI must start with
+  `Allow OpenAI call` unchecked every time.
 - Add tests with every new behavior.
 - GitHub Actions CI is expected to run Ruff and pytest on pull requests.
 

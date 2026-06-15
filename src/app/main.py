@@ -99,6 +99,10 @@ class FoundationModelRunRequest(TokenEstimateRequest):
     openai_api_key: str | None = Field(default=None, exclude=True)
 
 
+class LocalOpenAIKeyRequest(BaseModel):
+    api_key: str = Field(..., min_length=1)
+
+
 def create_app(service: GraphRagService | None = None) -> FastAPI:
     app = FastAPI(
         title="Cybersecurity GRC GraphRAG API",
@@ -128,6 +132,10 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
     def foundation_mock_ui() -> str:
         return _static_file("foundation_mock.html")
 
+    @app.get("/mock/foundation/packet-editor", response_class=HTMLResponse, include_in_schema=False)
+    def foundation_packet_editor_ui() -> str:
+        return _static_file("foundation_packet_editor.html")
+
     @app.get("/mock/foundation/business-context", response_class=PlainTextResponse)
     def foundation_business_context() -> str:
         return _repo_file("docs/business-context.md")
@@ -142,6 +150,28 @@ def create_app(service: GraphRagService | None = None) -> FastAPI:
             "vector_backend": current.settings.vector_backend,
             "graph_backend": current.settings.graph_backend,
         }
+
+    @app.get("/api/local/openai-key")
+    def get_local_openai_key() -> dict[str, Any]:
+        key = _read_local_openai_key()
+        return {"has_key": bool(key), "api_key": key or ""}
+
+    @app.post("/api/local/openai-key")
+    def save_local_openai_key(request: LocalOpenAIKeyRequest) -> dict[str, Any]:
+        api_key = request.api_key.strip()
+        if not api_key:
+            raise HTTPException(status_code=400, detail="OpenAI API key cannot be empty.")
+        path = _local_openai_key_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(api_key, encoding="utf-8")
+        return {"has_key": True}
+
+    @app.delete("/api/local/openai-key")
+    def forget_local_openai_key() -> dict[str, Any]:
+        path = _local_openai_key_path()
+        if path.exists():
+            path.unlink()
+        return {"has_key": False}
 
     @app.post("/api/workflows/complete-assessment/run")
     def complete_assessment_run(
@@ -389,6 +419,19 @@ def _static_file(name: str) -> str:
 def _repo_file(path: str) -> str:
     repo_root = Path(__file__).resolve().parents[2]
     return (repo_root / path).read_text(encoding="utf-8")
+
+
+def _local_openai_key_path() -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+    return repo_root / "storage" / "local" / "openai_api_key.txt"
+
+
+def _read_local_openai_key() -> str | None:
+    path = _local_openai_key_path()
+    if not path.exists():
+        return None
+    key = path.read_text(encoding="utf-8").strip()
+    return key or None
 
 
 def _chat_model_for_comparison(
