@@ -255,3 +255,10 @@ include per-call token usage in `token_budget.calls`. Use provider-reported toke
 available and the local rough estimate only as a fallback. Internal Ollama models should show token
 counts with zero API cost. External OpenAI estimates should show USD and EUR using the configured
 pricing table and USD-to-EUR rate.
+
+During development, the Final Result Contract panel includes an Expand button and an "Open Codex
+review packet" button. The app cannot directly call the Codex desktop agent; the review button
+opens a separate closeable window containing the initial input, run metadata, workflow summaries,
+final result, and review rubric so the user can paste it into Codex for an honest quality review.
+Do not represent this as an automatic Codex API call unless a real authorized Codex review API is
+added later.

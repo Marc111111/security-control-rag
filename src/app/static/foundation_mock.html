@@ -134,6 +134,7 @@
       }
       button.secondary { background: #fff; color: var(--accent); }
       button:disabled { opacity: .58; cursor: wait; }
+      button.small { padding: 6px 8px; font-size: 12px; }
       .button-link {
         display: inline-flex;
         align-items: center;
@@ -148,6 +149,12 @@
         text-decoration: none;
       }
       .status { color: var(--muted); font-size: 12px; }
+      .header-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
       .metrics {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -435,7 +442,13 @@
           <div class="panel-body"><div class="workflow" id="workflow"><div class="empty">No run yet.</div></div></div>
         </div>
         <div class="panel result-panel">
-          <div class="panel-header"><div class="panel-title">Final Result Contract</div></div>
+          <div class="panel-header">
+            <div class="panel-title">Final Result Contract</div>
+            <div class="header-actions">
+              <button class="secondary small" id="expandFinal" disabled>Expand</button>
+              <button class="secondary small" id="codexReview" disabled>Open Codex review packet</button>
+            </div>
+          </div>
           <div class="panel-body"><pre id="finalResult"></pre></div>
         </div>
         <div class="panel result-panel">
@@ -458,6 +471,8 @@
       const packetEl = document.querySelector("#packet");
       const workflowEl = document.querySelector("#workflow");
       const finalEl = document.querySelector("#finalResult");
+      const expandFinalEl = document.querySelector("#expandFinal");
+      const codexReviewEl = document.querySelector("#codexReview");
       const runsEl = document.querySelector("#runs");
       const metricsEl = document.querySelector("#metrics");
       const statusEl = document.querySelector("#status");
@@ -467,6 +482,7 @@
       let currentJobId = null;
       let pollTimer = null;
       let lastPreflight = null;
+      let lastCompletedRun = null;
       let previewCounter = 0;
       const previewStore = new Map();
 
@@ -722,6 +738,7 @@
       }
 
       function renderRun(data) {
+        lastCompletedRun = data;
         metricsEl.innerHTML = [
           metric("Run", data.run_id),
           metric("Provider", data.provider),
@@ -732,6 +749,7 @@
         ].join("");
         setWorkflowHtml(data.steps.map((step, index) => renderStep(step, index)).join(""));
         finalEl.textContent = JSON.stringify(data.final_result, null, 2);
+        updateFinalActions();
       }
 
       function renderPreflight(data) {
@@ -892,13 +910,17 @@
         if (event) event.stopPropagation();
         const item = previewStore.get(previewId);
         if (!item) return;
+        openTextWindow(item.title, item.text);
+      }
+
+      function openTextWindow(title, text) {
         const previewWindow = window.open("", "_blank", "width=1180,height=860");
         if (!previewWindow) return;
         previewWindow.document.write(`<!doctype html>
           <html lang="en">
             <head>
               <meta charset="utf-8" />
-              <title>${escapeHtml(item.title)}</title>
+              <title>${escapeHtml(title)}</title>
               <style>
                 body { margin: 0; color: #1d2730; background: #f6f7f4; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
                 header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid #d8ded6; background: #fbfcfa; }
@@ -908,11 +930,91 @@
               </style>
             </head>
             <body>
-              <header><h1>${escapeHtml(item.title)}</h1><button onclick="window.close()">Close</button></header>
-              <pre>${escapeHtml(item.text)}</pre>
+              <header><h1>${escapeHtml(title)}</h1><button onclick="window.close()">Close</button></header>
+              <pre>${escapeHtml(text)}</pre>
             </body>
           </html>`);
         previewWindow.document.close();
+      }
+
+      function expandFinalResult() {
+        if (!lastCompletedRun) return;
+        openTextWindow("Final Result Contract", JSON.stringify(lastCompletedRun.final_result, null, 2));
+      }
+
+      function openCodexReviewPacket() {
+        if (!lastCompletedRun) return;
+        openTextWindow("Codex Review Packet", buildCodexReviewPacket(lastCompletedRun));
+      }
+
+      function buildCodexReviewPacket(run) {
+        const sourceInput = completedRunInput(run);
+        const compactSteps = (run.steps || []).map((step, index) => ({
+          number: index + 1,
+          name: step.name,
+          tool: step.tool,
+          explanation: step.explanation,
+          input_summary: compactForReview(step.input),
+          output_summary: compactForReview(step.output),
+        }));
+        const packet = {
+          review_request: {
+            purpose: "Development-only independent quality review of one complete GraphRAG assessment result.",
+            instruction: [
+              "Act as a critical cybersecurity/GRC reviewer.",
+              "Compare the initial input, workflow evidence, and final result.",
+              "Give an honest estimate of whether the final result is aligned with a correct analysis.",
+              "Call out weak reasoning, missing evidence, unsupported conclusions, bad citations, and overconfident wording.",
+              "Separate what is supported by retrieved evidence from what looks like model reasoning.",
+              "Return a score from 0 to 100, confidence level, key issues, and concrete fixes."
+            ],
+            expected_review_sections: [
+              "Overall alignment score",
+              "Evidence and citation quality",
+              "Threat/vulnerability/risk correctness",
+              "Control recommendation quality",
+              "Business conclusion quality",
+              "Unsupported or missing conclusions",
+              "Recommended fixes before analyst approval"
+            ],
+            limitation: "This web app cannot directly call the Codex desktop agent. Paste this packet into Codex for review, or wire it to a future authorized review API."
+          },
+          initial_input_from_simulated_sql: sourceInput,
+          run_metadata: {
+            run_id: run.run_id,
+            created_at: run.created_at,
+            provider: run.provider,
+            model: run.model,
+            assessment_id: run.assessment_id,
+            vendor_id: run.vendor_id,
+            cost_estimate: run.cost_estimate,
+            token_budget: run.token_budget,
+          },
+          workflow_steps_summary: compactSteps,
+          final_result: run.final_result,
+        };
+        return JSON.stringify(packet, null, 2);
+      }
+
+      function compactForReview(value) {
+        const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        if (!text) return "";
+        return text.length > 5000 ? `${text.slice(0, 5000)}\n...[truncated for review packet]` : value;
+      }
+
+      function safeJsonParse(text, fallback) {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return fallback;
+        }
+      }
+
+      function completedRunInput(run) {
+        const firstStep = (run.steps || [])[0] || {};
+        const stepInput = firstStep.input || {};
+        const stepOutput = firstStep.output || {};
+        return stepInput.payload || stepOutput.normalized_packet || safeJsonParse(packetEl.value, {});
       }
 
       function metric(label, value) {
@@ -966,6 +1068,8 @@
       function clearOutput() {
         workflowEl.innerHTML = `<div class="empty">No run yet.</div>`;
         finalEl.textContent = "";
+        lastCompletedRun = null;
+        updateFinalActions();
         metricsEl.innerHTML = "";
         statusEl.textContent = "Ready. No workflow has run yet.";
       }
@@ -982,7 +1086,14 @@
         document.querySelector("#cancel").disabled = !busy || !currentJobId;
         document.querySelector("#run").disabled = busy;
         document.querySelector("#refreshRuns").disabled = busy;
+        if (!busy) updateFinalActions();
         if (text) statusEl.textContent = text;
+      }
+
+      function updateFinalActions() {
+        const enabled = Boolean(lastCompletedRun);
+        expandFinalEl.disabled = !enabled;
+        codexReviewEl.disabled = !enabled;
       }
 
       function escapeHtml(value) {
@@ -992,6 +1103,8 @@
       providerEl.addEventListener("change", configureModels);
       document.querySelector("#run").addEventListener("click", runWorkflow);
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
+      expandFinalEl.addEventListener("click", expandFinalResult);
+      codexReviewEl.addEventListener("click", openCodexReviewPacket);
       document.querySelector("#reset").addEventListener("click", () => {
         packetEl.value = JSON.stringify(sample, null, 2);
         window.localStorage.removeItem(savedScenarioKey);

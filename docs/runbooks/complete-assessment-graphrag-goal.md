@@ -66,6 +66,10 @@ tests, and a workflow UI/API.
   Multi-answer loops need explicit selection and storage steps so the chain does not appear to jump.
 - Each Input, Process, and Output preview has an Expand button that opens a separate inspection
   window. Closing that window must not affect the workflow run or tab open/closed state.
+- The Final Result Contract panel has its own Expand button plus a development-only "Open Codex
+  review packet" button. The packet contains initial input, run metadata, workflow summaries, final
+  result, and a review rubric. It is not an automatic Codex API call; it is a handoff packet for the
+  Codex desktop agent unless a real authorized review endpoint is added later.
 - Cancelling an Ollama job calls `ollama stop <model>` immediately, reports `cancelling` while any
   in-flight call unwinds, then calls `ollama stop <model>` again before reporting `cancelled`.
 - Job-scoped Ollama calls stream responses and pass `keep_alive=0s`; this lets cancellation be

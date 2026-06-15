@@ -17,6 +17,9 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Token guard tolerance (+/- %)" in response.text
     assert "Enforce token guard" in response.text
     assert "Est. one-run price" in response.text
+    assert "Open Codex review packet" in response.text
+    assert "buildCodexReviewPacket" in response.text
+    assert "Development-only independent quality review" in response.text
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text
