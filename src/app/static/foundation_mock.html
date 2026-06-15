@@ -1,0 +1,2425 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Complete Assessment Workflow</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f4;
+        --panel: #fff;
+        --ink: #1d2730;
+        --muted: #687789;
+        --line: #d8ded6;
+        --accent: #0f766e;
+        --soft: #eef5f2;
+        --warn: #9a4d07;
+      }
+      * { box-sizing: border-box; }
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        flex: 0 0 auto;
+        min-height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfa;
+      }
+      h1 { margin: 0; font-size: 19px; letter-spacing: 0; }
+      main {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(380px, .95fr) minmax(420px, 1.05fr);
+        gap: 16px;
+        padding: 16px;
+        overflow: hidden;
+      }
+      .stack {
+        min-height: 0;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        overflow-x: hidden;
+        overflow-y: auto;
+        padding-right: 4px;
+        scrollbar-gutter: stable;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-title { font-size: 13px; font-weight: 800; color: #25313d; }
+      .panel-body { padding: 14px; overflow: auto; }
+      .workflow-panel {
+        min-height: 0;
+        flex: 1 1 62%;
+        display: flex;
+        flex-direction: column;
+      }
+      .workflow-panel > .panel-body {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: auto;
+      }
+      .result-panel {
+        flex: 1 1 38%;
+        min-height: 210px;
+        display: flex;
+        flex-direction: column;
+      }
+      .result-panel > .panel-body {
+        min-height: 0;
+        flex: 1 1 auto;
+      }
+      textarea {
+        width: 100%;
+        min-height: 380px;
+        resize: vertical;
+        border: 0;
+        outline: 0;
+        padding: 14px;
+        color: #22313d;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      }
+      .config {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .config-panel .panel-header { padding: 9px 12px; }
+      .config-panel .panel-body { padding: 8px 12px 7px; overflow: visible; }
+      .config-panel .config {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(96px, .45fr);
+        gap: 5px 8px;
+        align-items: end;
+      }
+      .config-panel label { font-size: 11px; margin-bottom: 3px; }
+      .config-panel select,
+      .config-panel input { height: 30px; padding: 0 8px; }
+      .config-panel .check {
+        min-height: 22px;
+        margin-top: 0;
+        gap: 7px;
+        font-size: 11px;
+        align-self: end;
+      }
+      .config-panel .check input { width: 14px; height: 14px; }
+      .config-panel.compact-config .panel-body { padding: 6px 10px; }
+      .config-panel.compact-config .config {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 7px;
+      }
+      .config-panel.compact-config label { font-size: 10px; margin-bottom: 2px; }
+      .config-panel.compact-config select,
+      .config-panel.compact-config input {
+        height: 28px;
+        padding: 0 7px;
+        font-size: 12px;
+      }
+      .config-panel.compact-config .check {
+        min-height: 20px;
+        font-size: 10px;
+        gap: 5px;
+      }
+      .config-panel.compact-config .key-actions {
+        grid-column: 1 / -1;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .config-panel.compact-config .key-actions .status {
+        font-size: 10px;
+      }
+      .config-panel.compact-config .estimate-panel {
+        margin: 6px 0 0;
+        padding: 6px 0 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 0;
+      }
+      .config-panel.compact-config .estimate-header { margin-bottom: 4px; }
+      .config-panel.compact-config .estimate-line {
+        padding: 5px 7px;
+        gap: 5px;
+        font-size: 10px;
+      }
+      .config-panel.compact-config .estimate-note { display: none; }
+      label { display: block; font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 5px; }
+      select, input {
+        width: 100%;
+        height: 38px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0 9px;
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+      }
+      .check {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        margin-top: 17px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .check input { width: 16px; height: 16px; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      .compact-actions {
+        gap: 7px;
+      }
+      .compact-actions button {
+        padding: 7px 9px;
+      }
+      button,
+      .button-like {
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        border-radius: 6px;
+        padding: 9px 12px;
+        font-weight: 800;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+      button.secondary,
+      .button-like.secondary { background: #fff; color: var(--accent); }
+      button:disabled { opacity: .58; cursor: wait; }
+      button.small { padding: 6px 8px; font-size: 12px; }
+      .button-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        margin: 10px;
+        border: 1px solid var(--accent);
+        background: #fff;
+        color: var(--accent);
+        border-radius: 6px;
+        padding: 8px 10px;
+        font-weight: 800;
+        text-decoration: none;
+      }
+      .status { color: var(--muted); font-size: 12px; }
+      .header-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+      .estimate-panel {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--line);
+      }
+      .estimate-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 5px;
+      }
+      .estimate-line {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        border: 1px solid #d4e4e0;
+        background: var(--soft);
+        border-radius: 6px;
+        padding: 7px 9px;
+        color: #061f2b;
+        font-size: 12px;
+        line-height: 1.25;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .estimate-line .label {
+        color: var(--muted);
+        font-weight: 800;
+        margin-right: 3px;
+      }
+      .estimate-line .sep { color: #9aa8a3; }
+      .failure-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(29, 39, 48, .42);
+      }
+      .failure-modal.open { display: flex; }
+      .failure-box {
+        width: min(760px, 96vw);
+        max-height: 84vh;
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #d9b8a3;
+        border-radius: 8px;
+        box-shadow: 0 18px 60px rgba(29, 39, 48, .24);
+      }
+      .failure-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #ead6ca;
+        background: #fff7ed;
+      }
+      .failure-head strong { color: #8a3b0b; }
+      .failure-body { padding: 14px; font-size: 13px; line-height: 1.45; }
+      .failure-body h3 { margin: 12px 0 6px; font-size: 13px; }
+      .failure-body p { margin: 0 0 8px; }
+      .failure-body ul { margin: 0 0 10px 20px; padding: 0; }
+      .failure-body code { background: var(--soft); padding: 1px 4px; border-radius: 4px; }
+      .failure-body pre {
+        white-space: pre-wrap;
+        overflow: auto;
+        max-height: 180px;
+        background: var(--soft);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .technical-details summary { cursor: pointer; font-weight: 700; }
+      .estimate-note {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.2;
+      }
+      .corpus-chat .panel-body {
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+      .chat-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+      }
+      .chat-output {
+        min-height: 52px;
+        max-height: 340px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fbfcfa;
+        padding: 10px;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .chat-output h3 {
+        margin: 10px 0 5px;
+        font-size: 13px;
+      }
+      .chat-output h3:first-child { margin-top: 0; }
+      .chat-output ul {
+        margin: 0 0 8px 18px;
+        padding: 0;
+      }
+      .chat-output li { margin-bottom: 3px; }
+      .chat-output .source-list {
+        color: var(--muted);
+        font-size: 11px;
+      }
+      details.db-editor {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel);
+        overflow: hidden;
+      }
+      details.db-editor > summary {
+        cursor: pointer;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        font-weight: 800;
+      }
+      details.db-editor > .panel-body {
+        max-height: min(68vh, 760px);
+        overflow: auto;
+      }
+      .form-note {
+        margin-bottom: 12px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .form-note a { color: var(--accent); font-weight: 800; }
+      .form-section {
+        margin: 14px 0 8px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: #25313d;
+        font-size: 13px;
+        font-weight: 900;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .field-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfcfa;
+      }
+      .field-card.wide { grid-column: 1 / -1; }
+      .field-card textarea {
+        min-height: 72px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 9px;
+        font: inherit;
+      }
+      .field-help {
+        margin: 4px 0 8px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      .db-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+      .metric {
+        background: var(--soft);
+        border: 1px solid #d4e4e0;
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .metric span { display: block; color: var(--muted); font-size: 11px; font-weight: 800; margin-bottom: 4px; }
+      .metric strong { display: block; font-size: 14px; overflow-wrap: anywhere; }
+      .workflow { display: flex; flex-direction: column; gap: 10px; }
+      details.step {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fbfcfa;
+        overflow: visible;
+      }
+      details.step > summary {
+        display: grid;
+        grid-template-columns: 28px 1fr auto;
+        gap: 10px;
+        align-items: center;
+        cursor: pointer;
+        padding: 11px 12px;
+      }
+      .num {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 999px;
+        background: #dcebe8;
+        color: #0b5f59;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .step-name { font-size: 14px; font-weight: 800; }
+      .step-title-line {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+      }
+      .step-name { overflow-wrap: anywhere; }
+      .info-dot {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        border-radius: 999px;
+        border: 1px solid #b9c9c4;
+        background: #fff;
+        color: #0b5f59;
+        font-size: 12px;
+        font-weight: 900;
+        line-height: 1;
+        cursor: help;
+      }
+      .info-dot::after {
+        content: attr(data-tip);
+        position: absolute;
+        left: 50%;
+        bottom: calc(100% + 8px);
+        transform: translateX(-50%);
+        width: min(360px, 70vw);
+        padding: 9px 10px;
+        border: 1px solid #b9c9c4;
+        border-radius: 6px;
+        background: #fff;
+        box-shadow: 0 8px 24px rgba(20, 34, 44, .16);
+        color: #26323e;
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.35;
+        white-space: normal;
+        opacity: 0;
+        pointer-events: none;
+        z-index: 20;
+      }
+      .info-dot:hover::after,
+      .info-dot:focus::after { opacity: 1; }
+      .tool {
+        padding: 3px 8px;
+        border-radius: 999px;
+        background: #e8f1ee;
+        color: #0b5f59;
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .step-body { border-top: 1px solid var(--line); padding: 12px; }
+      .triptych {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+      details.preview {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+        overflow: hidden;
+      }
+      details.preview summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        cursor: pointer;
+        padding: 8px 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .preview-expand {
+        border-color: #b9c9c4;
+        background: #fff;
+        color: #0b5f59;
+        padding: 4px 7px;
+        border-radius: 5px;
+        font-size: 11px;
+      }
+      pre {
+        margin: 0;
+        padding: 10px;
+        max-height: 320px;
+        overflow: auto;
+        border-top: 1px solid var(--line);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      }
+      .runs-view {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        font-size: 12px;
+      }
+      .evidence-inline {
+        display: none;
+        margin-bottom: 10px;
+        border: 1px solid #d4e4e0;
+        border-radius: 8px;
+        background: #fbfcfa;
+        overflow: hidden;
+      }
+      .evidence-inline.open { display: block; }
+      .evidence-inline-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 9px;
+        border-bottom: 1px solid var(--line);
+      }
+      .evidence-inline-head strong {
+        font-size: 12px;
+        color: #25313d;
+      }
+      .evidence-inline-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .evidence-inline pre {
+        max-height: 360px;
+        border-top: 0;
+      }
+      .runs-help {
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .runs-empty {
+        border: 1px dashed #b9c9c4;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fbfcfa;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .current-result-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+        margin-bottom: 10px;
+        padding: 9px;
+        border: 1px solid #d4e4e0;
+        border-radius: 8px;
+        background: var(--soft);
+      }
+      .current-result-actions strong {
+        margin-right: auto;
+        color: #25313d;
+        font-size: 12px;
+      }
+      .current-result-actions.empty {
+        display: block;
+        margin-bottom: 10px;
+        padding: 10px;
+      }
+      .current-result-actions button {
+        padding: 5px 7px;
+        font-size: 11px;
+      }
+      .runs-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .runs-table th,
+      .runs-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 7px 6px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .runs-table th {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 900;
+      }
+      .runs-table td {
+        color: #22313d;
+        overflow-wrap: anywhere;
+      }
+      .run-status {
+        display: inline-flex;
+        border-radius: 999px;
+        padding: 2px 7px;
+        background: var(--soft);
+        color: #0b5f59;
+        font-weight: 800;
+      }
+      .run-status.incomplete {
+        background: #fff7ed;
+        color: #8a3b0b;
+      }
+      .run-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+      .run-actions button {
+        padding: 4px 6px;
+        font-size: 11px;
+      }
+      .empty { padding: 16px; color: var(--muted); font-size: 14px; }
+      .warning { color: var(--warn); }
+      @media (max-width: 1300px) {
+        .config-panel .config { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      }
+      @media (max-width: 860px) {
+        main {
+          grid-template-columns: minmax(0, 1fr);
+          overflow: auto;
+        }
+        .stack {
+          min-height: max-content;
+          overflow: visible;
+          padding-right: 0;
+        }
+        .metrics, .triptych, .form-grid { grid-template-columns: 1fr; }
+        .config-panel .config { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        .field-card.wide { grid-column: auto; }
+      }
+      .packet-state { display: none; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Complete GraphRAG Assessment Workflow</h1>
+      <div class="status">Simulated PostgreSQL input, real Qdrant/BM25/Neo4j retrieval, real model calls</div>
+    </header>
+    <main>
+      <section class="stack">
+        <div class="panel config-panel compact-config">
+          <div class="panel-header"><div class="panel-title">Configuration</div></div>
+          <div class="panel-body">
+            <div class="config">
+              <div>
+                <label for="provider">Provider</label>
+                <select id="provider">
+                  <option value="ollama">Internal Ollama</option>
+                  <option value="openai">External OpenAI</option>
+                </select>
+              </div>
+              <div>
+                <label for="model">Model</label>
+                <select id="model"></select>
+              </div>
+              <div>
+                <label for="apiKey">OpenAI API key (run only)</label>
+                <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
+              </div>
+              <div>
+                <label for="tokenTolerance">Token guard +/- %</label>
+                <input id="tokenTolerance" type="number" min="0" max="100" step="1" value="10" />
+              </div>
+              <label class="check">
+                <input type="checkbox" id="confirmExternal" />
+                Allow OpenAI call
+              </label>
+              <label class="check">
+                <input type="checkbox" id="enforceTokenBudget" checked />
+                Enforce token guard
+              </label>
+              <div class="key-actions">
+                <button class="secondary small" id="saveApiKey" type="button">Save key</button>
+                <button class="secondary small" id="forgetApiKey" type="button">Forget key</button>
+                <span class="status" id="apiKeyStatus">Key not loaded.</span>
+              </div>
+            </div>
+            <div class="estimate-panel">
+              <div class="estimate-header">
+                <div class="panel-title">Run Estimate</div>
+                <button class="secondary small" id="estimateCost" type="button" onclick="estimateCost()">Estimate cost</button>
+              </div>
+              <div class="estimate-line" id="costEstimate">
+                <span><span class="label">Estimate</span>No estimate yet</span>
+              </div>
+              <div class="estimate-note">
+                Estimate only: no API key or model call. Actual OpenAI runs still require confirmation.
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="actions compact-actions">
+          <a class="button-like secondary" id="openQuestionnaireBuilder" href="/mock/foundation/questionnaire" target="foundationQuestionnaireEditor">Populate questionnaire</a>
+          <a class="button-like secondary" id="openPacketWindow" href="/mock/foundation/packet-editor" target="_blank" rel="noreferrer">Simulated SQL Result JSON</a>
+          <button class="secondary" id="reset" type="button" onclick="resetPacketToSample()">Reset input</button>
+        </div>
+        <textarea class="packet-state" id="packet" hidden></textarea>
+        <div class="panel corpus-chat">
+          <div class="panel-header">
+            <div class="panel-title">Ask Standards Corpus</div>
+            <button class="secondary small" id="expandCorpusAnswer" disabled>Expand</button>
+          </div>
+          <div class="panel-body">
+            <div class="chat-row">
+              <input id="corpusQuestion" type="text" spellcheck="true" placeholder="Ask a direct standards/RAG question..." />
+              <button class="secondary" id="askCorpus">Ask</button>
+            </div>
+            <div class="status" id="corpusStatus">Direct corpus query. Separate from the questionnaire workflow.</div>
+            <div class="chat-output" id="corpusAnswer"><div class="empty">No direct question yet.</div></div>
+          </div>
+        </div>
+        <div class="actions">
+          <button id="run">Run Complete Workflow</button>
+          <button class="secondary" id="cancel" disabled>Cancel Run</button>
+          <button class="secondary" id="refreshRuns">Refresh Saved Runs</button>
+        </div>
+        <div class="status" id="status">Ready. No workflow has run yet.</div>
+        <div class="metrics" id="metrics"></div>
+      </section>
+      <section class="stack">
+        <div class="panel workflow-panel">
+          <div class="panel-header"><div class="panel-title">Execution Workflow</div></div>
+          <div class="panel-body"><div class="workflow" id="workflow"><div class="empty">No run yet.</div></div></div>
+        </div>
+        <div class="panel result-panel">
+          <div class="panel-header"><div class="panel-title">Result Summary And Saved Runs</div></div>
+          <div class="panel-body">
+            <div id="currentRunActions" class="current-result-actions empty">No current run result yet.</div>
+            <div id="evidenceInline" class="evidence-inline"></div>
+            <div class="runs-view" id="runs"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+    <div class="failure-modal" id="failureModal" role="dialog" aria-modal="true" aria-labelledby="failureTitle">
+      <div class="failure-box">
+        <div class="failure-head">
+          <strong id="failureTitle">Workflow failed quality checks</strong>
+          <button class="secondary small" id="closeFailure" type="button">Close</button>
+        </div>
+        <div class="failure-body" id="failureBody"></div>
+      </div>
+    </div>
+    <script>
+      let models = {
+        ollama: ["qwen3:14b", "gemma3:4b"],
+        openai: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5", "gpt-4.1-mini"],
+      };
+      const providerEl = document.querySelector("#provider");
+      const modelEl = document.querySelector("#model");
+      const keyEl = document.querySelector("#apiKey");
+      const apiKeyStatusEl = document.querySelector("#apiKeyStatus");
+      const saveApiKeyEl = document.querySelector("#saveApiKey");
+      const forgetApiKeyEl = document.querySelector("#forgetApiKey");
+      const confirmEl = document.querySelector("#confirmExternal");
+      const tokenToleranceEl = document.querySelector("#tokenTolerance");
+      const enforceTokenBudgetEl = document.querySelector("#enforceTokenBudget");
+      const packetEl = document.querySelector("#packet");
+      const workflowEl = document.querySelector("#workflow");
+      const currentRunActionsEl = document.querySelector("#currentRunActions");
+      const evidenceInlineEl = document.querySelector("#evidenceInline");
+      const costEstimateEl = document.querySelector("#costEstimate");
+      const runsEl = document.querySelector("#runs");
+      const metricsEl = document.querySelector("#metrics");
+      const statusEl = document.querySelector("#status");
+      const dbFormEl = document.querySelector("#dbForm");
+      const failureModalEl = document.querySelector("#failureModal");
+      const failureBodyEl = document.querySelector("#failureBody");
+      const closeFailureEl = document.querySelector("#closeFailure");
+      const corpusQuestionEl = document.querySelector("#corpusQuestion");
+      const askCorpusEl = document.querySelector("#askCorpus");
+      const corpusStatusEl = document.querySelector("#corpusStatus");
+      const corpusAnswerEl = document.querySelector("#corpusAnswer");
+      const expandCorpusAnswerEl = document.querySelector("#expandCorpusAnswer");
+      const savedScenarioKey = "foundationMock.savedDbScenario";
+      const savedQuestionnaireKey = "foundationMock.savedQuestionnaire";
+      let sample = null;
+      let currentJobId = null;
+      let pollTimer = null;
+      let lastPreflight = null;
+      let lastCompletedRun = null;
+      let lastCorpusAnswer = null;
+      let runHistory = [];
+      let dbFormDirty = false;
+      let previewCounter = 0;
+      const previewStore = new Map();
+
+      function configureModels() {
+        const current = modelEl.value;
+        const providerModels = models[providerEl.value] || [];
+        modelEl.innerHTML = providerModels.map((model) => `<option value="${model}">${model}</option>`).join("");
+        if (providerModels.includes(current)) modelEl.value = current;
+        refreshEstimateOrMarkDirty();
+      }
+
+      async function loadAvailableModels() {
+        try {
+          const data = await postJson("/api/models/available", {
+            openai_api_key: keyEl.value.trim() || null,
+          });
+          models = {
+            ollama: data.ollama?.length ? data.ollama : models.ollama,
+            openai: data.openai?.length ? data.openai : models.openai,
+          };
+          configureModels();
+        } catch {
+          configureModels();
+        }
+      }
+
+      function refreshEstimateOrMarkDirty() {
+        if (packetIsReady()) {
+          estimateCostQuietly();
+          return;
+        }
+        clearCostEstimate();
+      }
+
+      async function loadSample() {
+        sample = await getJson("/api/mock/foundation-packet");
+        const saved = loadSavedScenario();
+        packetEl.value = JSON.stringify(saved || sample, null, 2);
+        clearOutput();
+      }
+
+      function loadSavedScenario() {
+        try {
+          const raw = window.localStorage.getItem(savedQuestionnaireKey)
+            || window.localStorage.getItem(savedScenarioKey);
+          return raw ? JSON.parse(raw) : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function currentPacket() {
+        return JSON.parse(packetEl.value);
+      }
+
+      function packetIsReady() {
+        return Boolean(packetEl.value && packetEl.value.trim().startsWith("{"));
+      }
+
+      function applyPacketJson(text, message = "Updated workflow input from the JSON editor.") {
+        const parsed = JSON.parse(text);
+        packetEl.value = JSON.stringify(parsed, null, 2);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = message;
+        estimateCostQuietly();
+        return { ok: true, message };
+      }
+
+      function resetPacketToSample(message = "Reset simulated DB input to the initial sample.") {
+        packetEl.value = JSON.stringify(sample, null, 2);
+        window.localStorage.removeItem(savedScenarioKey);
+        clearOutput();
+        statusEl.textContent = message;
+        estimateCostQuietly();
+      }
+
+      function renderDbForm(packet) {
+        if (!dbFormEl) return;
+        const tierAttributes = Object.fromEntries((packet.tier?.attributes || []).map((item) => [item.name, item]));
+        dbFormEl.innerHTML = `
+          <div class="form-section">Vendor business context</div>
+          <div class="form-grid">
+            ${field("vendor.name", "Vendor name", "The supplier name used in the assessment and final report.", packet.vendor?.name)}
+            ${field("vendor.vendor_type", "Vendor type", "The type of supplier. This helps decide which risks and questions are relevant.", packet.vendor?.vendor_type)}
+            ${field("vendor.business_relationship", "Business relationship", "What this vendor does for the organization and why the relationship matters.", packet.vendor?.business_relationship, "textarea", true)}
+            ${field("vendor.country", "Country / region", "Where the vendor mainly operates or provides the service from.", packet.vendor?.country)}
+            ${field("vendor.services", "Services in scope", "Comma-separated services being assessed. Keep this limited to the service in scope.", (packet.vendor?.services || []).join(", "), "textarea", true)}
+          </div>
+          <div class="form-section">Tier context</div>
+          <div class="form-grid">
+            ${field("tier.level", "Tier level", "Relationship criticality level from 1 to 4. Lower means more critical in this prototype.", packet.tier?.level, "number")}
+            ${field("tier.definition", "Tier definition", "Plain-language reason why this vendor has the selected tier.", packet.tier?.definition, "textarea", true)}
+            ${tierField(tierAttributes, "company_size", "Company size", "Indicates operational footprint and vendor capacity.")}
+            ${tierField(tierAttributes, "sensitive_data_access", "Sensitive data access", "Whether the vendor processes sensitive business, customer, employee, or regulated data.")}
+            ${tierField(tierAttributes, "privileged_access", "Privileged access", "Whether the vendor can administer or deeply access internal systems.")}
+            ${tierField(tierAttributes, "geolocation", "Geolocation", "Region where the vendor operates or processes data.")}
+          </div>
+          <div class="form-section">Questionnaire answers</div>
+          <div class="form-note">
+            These are the questionnaire records that would normally come from PostgreSQL. Add,
+            remove, or edit questions here to simulate a different vendor assessment before running
+            the workflow.
+          </div>
+          ${(packet.questionnaire_results || []).map((result, index) => questionFields(result, index)).join("")}
+          ${!(packet.questionnaire_results || []).length ? '<div class="runs-empty">No questionnaire questions yet. Use Add question to create one.</div>' : ""}
+        `;
+      }
+
+      function field(path, label, help, value, type = "text", wide = false, options = null) {
+        const escapedValue = escapeHtml(value ?? "");
+        const control = options
+          ? `<select data-field="${escapeHtml(path)}">${options.map((option) => `<option value="${escapeHtml(option)}"${String(value) === option ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`
+          : type === "textarea"
+            ? `<textarea data-field="${escapeHtml(path)}">${escapedValue}</textarea>`
+            : `<input data-field="${escapeHtml(path)}" type="${escapeHtml(type)}" value="${escapedValue}" />`;
+        return `<div class="field-card${wide ? " wide" : ""}">
+          <label>${escapeHtml(label)}</label>
+          <div class="field-help">${escapeHtml(help)}</div>
+          ${control}
+        </div>`;
+      }
+
+      function tierField(attributes, name, label, help) {
+        const attribute = attributes[name] || { value: "", definition: help };
+        return field(`tier_attribute.${name}`, label, `${help} Current database definition: ${attribute.definition || "not supplied"}`, attribute.value);
+      }
+
+      function questionFields(result, index) {
+        const prefix = `questionnaire_results.${index}`;
+        const control = `${result.control?.framework || ""} ${result.control?.control_id || ""} - ${result.control?.title || ""}`;
+        return `<div class="form-section">
+            <span>${escapeHtml(result.question_id || `Question ${index + 1}`)} linked control: ${escapeHtml(control)}</span>
+            <button class="secondary small" type="button" data-remove-question="${index}">Remove question</button>
+          </div>
+          <div class="form-grid">
+            ${field(`${prefix}.question_id`, "Question ID", "Identifier used by the assessment and final report.", result.question_id)}
+            ${field(`${prefix}.control.framework`, "Control framework", "Framework that the question is linked to, for example ISO 27002 or NIST CSF.", result.control?.framework)}
+            ${field(`${prefix}.control.control_id`, "Control ID", "The exact framework control reference used by retrieval and citations.", result.control?.control_id)}
+            ${field(`${prefix}.control.title`, "Control title", "Human-readable control name.", result.control?.title)}
+            ${field(`${prefix}.control.control_type`, "Control type", "How this control mainly reduces risk or improves resilience.", result.control?.control_type || "unknown", "text", false, ["preventative", "detective", "corrective", "recovery", "response", "unknown"])}
+            ${field(`${prefix}.question_text`, "Question text", "The question shown to the vendor.", result.question_text, "textarea", true)}
+            ${field(`${prefix}.response`, "Vendor answer", "The vendor's direct answer before analyst interpretation.", result.response)}
+            ${field(`${prefix}.compliance`, "Compliance assessment", "Analyst assessment used to decide whether this is a strength or weakness.", result.compliance, "text", false, ["full", "partial", "no", "not_applicable", "unknown"])}
+            ${field(`${prefix}.maturity`, "Control maturity", "How mature the control appears based on answer, comments, and evidence.", result.maturity, "text", false, ["basic", "developing", "implemented", "managed", "optimized", "unknown"])}
+            ${field(`${prefix}.vendor_comment`, "Vendor comment", "Free text supplied by the vendor. It is sanitized before model use.", result.vendor_comment, "textarea", true)}
+            ${field(`${prefix}.analyst_comment`, "Analyst comment", "Analyst interpretation or challenge. It is sanitized before model use.", result.analyst_comment, "textarea", true)}
+            ${field(`${prefix}.evidence_descriptions`, "Evidence descriptions", "One evidence description per line. The prototype stores descriptions only.", (result.evidence || []).map((item) => item.description).join("\n"), "textarea", true)}
+          </div>`;
+      }
+
+      function applyDbFormToPacket(options = {}) {
+        const clear = options.clear !== false;
+        const updateStatus = options.updateStatus !== false;
+        const packet = currentPacket();
+        document.querySelectorAll("[data-field]").forEach((input) => {
+          setPacketField(packet, input.dataset.field, input.value);
+        });
+        packetEl.value = JSON.stringify(packet, null, 2);
+        renderDbForm(packet);
+        dbFormDirty = false;
+        if (clear) clearOutput();
+        if (updateStatus) statusEl.textContent = "Applied simulated DB form changes to the workflow JSON.";
+        return packet;
+      }
+
+      function openQuestionnaireBuilder() {
+        const popup = window.open(
+          "/mock/foundation/questionnaire",
+          "foundationQuestionnaireEditor",
+          "width=1180,height=860"
+        );
+        if (!popup) {
+          window.location.href = "/mock/foundation/questionnaire";
+        }
+      }
+
+      function saveQuestionnaire() {
+        const packet = applyDbFormToPacket({ clear: false, updateStatus: false });
+        window.localStorage.setItem(savedQuestionnaireKey, JSON.stringify(packet));
+        window.localStorage.setItem(savedScenarioKey, JSON.stringify(packet));
+        statusEl.textContent = "Saved this as your user questionnaire. Load user questionnaire will bring it back later.";
+      }
+
+      function loadSavedQuestionnaire() {
+        const saved = loadSavedScenario();
+        if (!saved) {
+          statusEl.textContent = "No saved user questionnaire found yet.";
+          return;
+        }
+        packetEl.value = JSON.stringify(saved, null, 2);
+        renderDbForm(saved);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Loaded the last saved user questionnaire.";
+        estimateCostQuietly();
+      }
+
+      function resetQuestionnaireDefaults() {
+        packetEl.value = JSON.stringify(sample, null, 2);
+        renderDbForm(sample);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Reset questionnaire to the default sample values.";
+        estimateCostQuietly();
+      }
+
+      function clearQuestionnaire() {
+        const blank = blankQuestionnairePacket();
+        packetEl.value = JSON.stringify(blank, null, 2);
+        renderDbForm(blank);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Cleared the questionnaire so you can start from scratch.";
+        estimateCostQuietly();
+      }
+
+      function addQuestion() {
+        const packet = applyDbFormToPacket({ clear: false, updateStatus: false });
+        packet.questionnaire_results = packet.questionnaire_results || [];
+        packet.questionnaire_results.push(newQuestionTemplate(packet.questionnaire_results.length + 1));
+        packetEl.value = JSON.stringify(packet, null, 2);
+        renderDbForm(packet);
+        dbFormDirty = true;
+        clearCostEstimate();
+        statusEl.textContent = "Added a blank questionnaire question. Fill it in, then apply or save.";
+        openQuestionnaireBuilder();
+      }
+
+      function removeQuestion(index) {
+        const packet = applyDbFormToPacket({ clear: false, updateStatus: false });
+        packet.questionnaire_results = packet.questionnaire_results || [];
+        packet.questionnaire_results.splice(index, 1);
+        packetEl.value = JSON.stringify(packet, null, 2);
+        renderDbForm(packet);
+        dbFormDirty = true;
+        clearCostEstimate();
+        statusEl.textContent = "Removed the questionnaire question. Apply or save to keep this version.";
+      }
+
+      function blankQuestionnairePacket() {
+        const blank = clonePacket(sample);
+        blank.assessment_id = "";
+        blank.vendor = {
+          vendor_id: "",
+          name: "",
+          vendor_type: "",
+          business_relationship: "",
+          country: "",
+          services: [],
+        };
+        blank.tier = {
+          level: 1,
+          definition: "",
+          attributes: (sample?.tier?.attributes || []).map((attribute) => ({
+            name: attribute.name,
+            value: "",
+            definition: attribute.definition || "",
+          })),
+        };
+        blank.questionnaire_results = [];
+        blank.metadata = { source: "manual_questionnaire_builder" };
+        return blank;
+      }
+
+      function newQuestionTemplate(number) {
+        return {
+          question_id: `Q${number}`,
+          question_text: "",
+          control: {
+            framework: "",
+            control_id: "",
+            title: "",
+            control_type: "unknown",
+          },
+          response: "",
+          vendor_comment: "",
+          analyst_comment: "",
+          compliance: "unknown",
+          maturity: "unknown",
+          evidence: [],
+        };
+      }
+
+      function clonePacket(packet) {
+        return JSON.parse(JSON.stringify(packet || {}));
+      }
+
+      function syncDirtyDbForm() {
+        if (dbFormDirty) applyDbFormToPacket({ clear: false, updateStatus: false });
+      }
+
+      function setPacketField(packet, path, value) {
+        if (path === "vendor.services") {
+          packet.vendor.services = value.split(",").map((item) => item.trim()).filter(Boolean);
+          return;
+        }
+        if (path.startsWith("tier_attribute.")) {
+          const name = path.split(".")[1];
+          const attribute = (packet.tier.attributes || []).find((item) => item.name === name);
+          if (attribute) attribute.value = parseBusinessValue(value);
+          return;
+        }
+        if (path.endsWith(".evidence_descriptions")) {
+          const index = Number(path.split(".")[1]);
+          const result = packet.questionnaire_results[index];
+          result.evidence = value.split("\n").map((line, itemIndex) => line.trim()).filter(Boolean).map((description, itemIndex) => ({
+            evidence_id: result.evidence?.[itemIndex]?.evidence_id || `${result.question_id}-E${itemIndex + 1}`,
+            description,
+            file_type: result.evidence?.[itemIndex]?.file_type || "pdf"
+          }));
+          return;
+        }
+        const parts = path.split(".");
+        let target = packet;
+        for (const part of parts.slice(0, -1)) {
+          target = Array.isArray(target) ? target[Number(part)] : target[part];
+        }
+        const key = parts[parts.length - 1];
+        target[key] = key === "level" ? Number(value) : value;
+      }
+
+      function parseBusinessValue(value) {
+        if (value === "true") return true;
+        if (value === "false") return false;
+        if (value !== "" && !Number.isNaN(Number(value))) return Number(value);
+        return value;
+      }
+
+      async function getJson(url) {
+        const response = await fetch(url);
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || response.statusText);
+        return data;
+      }
+
+      async function postJson(url, body) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || response.statusText);
+        return data;
+      }
+
+      async function deleteJson(url) {
+        const response = await fetch(url, { method: "DELETE" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || response.statusText);
+        return data;
+      }
+
+      async function loadLocalOpenAiKey() {
+        confirmEl.checked = false;
+        try {
+          const data = await getJson("/api/local/openai-key");
+          if (data.has_key && data.api_key) {
+            keyEl.value = data.api_key;
+            apiKeyStatusEl.textContent = "Saved key loaded. External calls remain disabled.";
+          } else {
+            keyEl.value = "";
+            apiKeyStatusEl.textContent = "No saved key.";
+          }
+        } catch (error) {
+          apiKeyStatusEl.textContent = "Could not read saved key.";
+        }
+        await loadAvailableModels();
+      }
+
+      async function saveLocalOpenAiKey() {
+        const apiKey = keyEl.value.trim();
+        if (!apiKey) {
+          apiKeyStatusEl.innerHTML = `<span class="warning">Enter a key first.</span>`;
+          return;
+        }
+        try {
+          await postJson("/api/local/openai-key", { api_key: apiKey });
+          confirmEl.checked = false;
+          apiKeyStatusEl.textContent = "Saved locally. External calls remain disabled.";
+          await loadAvailableModels();
+        } catch (error) {
+          apiKeyStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      async function forgetLocalOpenAiKey() {
+        try {
+          await deleteJson("/api/local/openai-key");
+          keyEl.value = "";
+          confirmEl.checked = false;
+          apiKeyStatusEl.textContent = "Saved key deleted.";
+          await loadAvailableModels();
+        } catch (error) {
+          apiKeyStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
+      }
+
+      async function askCorpus() {
+        const question = corpusQuestionEl.value.trim();
+        if (!question) {
+          corpusStatusEl.innerHTML = `<span class="warning">Enter a question first.</span>`;
+          return;
+        }
+        askCorpusEl.disabled = true;
+        expandCorpusAnswerEl.disabled = true;
+        corpusStatusEl.textContent = "Querying the standards corpus...";
+        corpusAnswerEl.innerHTML = `<div class="empty">Waiting for the model and retrieved sources...</div>`;
+        try {
+          const answer = await postJson("/api/query", { question, top_k: 8, debug: true });
+          lastCorpusAnswer = answer;
+          renderCorpusAnswer(answer);
+          corpusStatusEl.textContent = "Corpus answer ready.";
+          expandCorpusAnswerEl.disabled = false;
+        } catch (error) {
+          lastCorpusAnswer = null;
+          corpusStatusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          corpusAnswerEl.innerHTML = `<div class="warning">The direct corpus query failed. Check that the API server, vector database, graph database, and configured model are available.</div>`;
+        } finally {
+          askCorpusEl.disabled = false;
+        }
+      }
+
+      function renderCorpusAnswer(data) {
+        const answer = data.answer || {};
+        const sections = [
+          textSection("Executive summary", answer.executive_summary),
+          listSection("Threats", answer.threats),
+          listSection("Vulnerabilities", answer.vulnerabilities),
+          listSection("Risks", answer.risks),
+          listSection("Recommended controls", answer.recommended_controls),
+          listSection("Missing information", answer.missing_information),
+          sourceSection(data.sources || []),
+        ].filter(Boolean);
+        const warning = data.insufficient_evidence
+          ? `<div class="warning"><strong>Insufficient evidence:</strong> the corpus did not return enough trusted material for a confident answer.</div>`
+          : "";
+        corpusAnswerEl.innerHTML = warning + (sections.length ? sections.join("") : `<div class="empty">The model returned no structured answer.</div>`);
+      }
+
+      function textSection(title, value) {
+        if (!value) return "";
+        return `<h3>${escapeHtml(title)}</h3><p>${escapeHtml(value)}</p>`;
+      }
+
+      function listSection(title, values) {
+        if (!Array.isArray(values) || !values.length) return "";
+        return `<h3>${escapeHtml(title)}</h3><ul>${values.map((item) => `<li>${escapeHtml(readableCorpusItem(item))}</li>`).join("")}</ul>`;
+      }
+
+      function readableCorpusItem(item) {
+        if (typeof item === "string") return item;
+        if (!item || typeof item !== "object") return String(item ?? "");
+        const preferred = item.title || item.name || item.control || item.risk || item.threat || item.vulnerability || item.summary || item.description;
+        if (preferred) return preferred;
+        return JSON.stringify(item);
+      }
+
+      function sourceSection(sources) {
+        if (!Array.isArray(sources) || !sources.length) return "";
+        const rows = sources.slice(0, 6).map((source, index) => {
+          const metadata = source.metadata || {};
+          const label = source.source || metadata.source_path || metadata.filename || "source";
+          const score = source.score === undefined || source.score === null ? "" : ` (${Number(source.score).toFixed(3)})`;
+          return `<li>${escapeHtml(`[S${index + 1}] ${label}${score}`)}</li>`;
+        }).join("");
+        return `<h3>Sources</h3><ul class="source-list">${rows}</ul>`;
+      }
+
+      function expandCorpusAnswer() {
+        if (!lastCorpusAnswer) return;
+        openTextWindow("Direct Corpus Query Result", JSON.stringify(lastCorpusAnswer, null, 2));
+      }
+
+      function requestBody() {
+        syncDirtyDbForm();
+        const model = {
+          provider: providerEl.value,
+          model: modelEl.value,
+          confirm_external_call: confirmEl.checked,
+          estimated_output_tokens: 1200,
+          max_estimated_input_tokens: 60000,
+          enforce_token_budget: enforceTokenBudgetEl.checked,
+          token_budget_tolerance_percent: Number(tokenToleranceEl.value || 10),
+        };
+        if (providerEl.value === "openai" && keyEl.value.trim()) model.openai_api_key = keyEl.value.trim();
+        return {
+          input_source: {
+            adapter: "foundation_packet_v1",
+            payload: JSON.parse(packetEl.value),
+          },
+          model,
+          top_k: 8,
+          debug: true,
+        };
+      }
+
+      async function runWorkflow() {
+        try {
+          setBusy(true, "Checking workflow size before model calls...");
+          const body = requestBody();
+          const preflight = await loadPreflight(body);
+          renderPreflight(preflight);
+          if (preflight.will_exceed_guard) {
+            throw new Error(`Preflight blocked: estimated input tokens ${preflight.estimated_input_tokens} exceed guard ${preflight.max_estimated_input_tokens}`);
+          }
+          statusEl.textContent = "Starting background workflow job...";
+          const job = await postJson("/api/workflows/complete-assessment/jobs", body);
+          currentJobId = job.job_id;
+          setBusy(true);
+          renderJob(job);
+          startPolling();
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          showFailureModal({
+            title: "Workflow could not start",
+            message: error.message,
+            operatorFixes: ["Review the configuration and input values, then run the workflow again."],
+            systemFixes: ["If this repeats for valid input, inspect the preflight and request validation logic."]
+          });
+          currentJobId = null;
+          stopPolling();
+          setBusy(false);
+        }
+      }
+
+      async function estimateCost() {
+        try {
+          setBusy(true, "Estimating cost for the current input...");
+          const preflight = await loadPreflight(requestBody());
+          renderPreflight(preflight);
+          statusEl.textContent = preflight.will_exceed_guard
+            ? "Estimate complete. This run would be blocked by the current token guard."
+            : "Estimate complete for the current input. No model call was made.";
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function estimateCostQuietly() {
+        try {
+          const preflight = await loadPreflight(requestBody());
+          renderCostEstimate(preflight);
+        } catch (error) {
+          costEstimateEl.innerHTML = estimatePart("Estimate", `Unavailable: ${error.message}`);
+        }
+      }
+
+      async function loadPreflight(body) {
+        return postJson("/api/workflows/complete-assessment/preflight", body);
+      }
+
+      async function cancelWorkflow() {
+        if (!currentJobId) return;
+        try {
+          statusEl.textContent = `Cancelling ${currentJobId} and asking Ollama to unload the model...`;
+          const job = await postJson(`/api/workflows/complete-assessment/jobs/${currentJobId}/cancel`, {});
+          renderJob(job);
+          if (job.status === "cancelling") {
+            setBusy(true);
+            startPolling();
+          } else {
+            stopPolling();
+            setBusy(false);
+          }
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          setBusy(false);
+        }
+      }
+
+      function startPolling() {
+        stopPolling();
+        pollTimer = window.setInterval(pollJob, 2000);
+        pollJob();
+      }
+
+      function stopPolling() {
+        if (pollTimer) window.clearInterval(pollTimer);
+        pollTimer = null;
+      }
+
+      async function pollJob() {
+        if (!currentJobId) return;
+        try {
+          const job = await getJson(`/api/workflows/complete-assessment/jobs/${currentJobId}`);
+          renderJob(job);
+          if (["completed", "failed", "cancelled"].includes(job.status)) {
+            stopPolling();
+            setBusy(false);
+            if (job.status === "completed" && job.result) {
+              renderRun(job.result);
+              await refreshRuns();
+              statusEl.textContent = `Completed ${job.result.run_id}`;
+            } else if (job.status === "cancelled") {
+              statusEl.textContent = `Cancelled ${job.job_id}`;
+            } else {
+              statusEl.innerHTML = `<span class="warning">${escapeHtml(job.error || "Workflow failed")}</span>`;
+              showFailureModal(failureDetails(job));
+            }
+          }
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          showFailureModal({
+            title: "Workflow status check failed",
+            message: error.message,
+            operatorFixes: ["Check that the local API server is still running, then refresh the page."],
+            systemFixes: ["Inspect API logs if polling fails repeatedly while the server is up."]
+          });
+          stopPolling();
+          setBusy(false);
+        }
+      }
+
+      function renderRun(data) {
+        lastCompletedRun = data;
+        metricsEl.innerHTML = [
+          metric("Run", data.run_id),
+          metric("Provider", data.provider),
+          metric("Model", data.model),
+          metric("Est. one-run price", costLabel(data.cost_estimate)),
+          metric("Tokens actual/est.", tokenComparisonLabel(data.token_budget)),
+          metric("Token cap", data.token_budget?.allowed_total_tokens ?? "n/a"),
+          metric("Duration", formatDuration(data.duration_seconds)),
+        ].join("");
+        setWorkflowHtml(data.steps.map((step, index) => renderStep(step, index)).join(""));
+        updateFinalActions();
+      }
+
+      function renderPreflight(data) {
+        lastPreflight = data;
+        renderCostEstimate(data);
+        metricsEl.innerHTML = "";
+        setWorkflowHtml(renderPreflightStep(data));
+      }
+
+      function renderPreflightStep(data) {
+        const description = "This checks the likely size and cost of the workflow before any AI model is called.";
+        return `<details class="step">
+          ${renderStepSummary("0", "Preflight estimate", description, "Python deterministic workflow")}
+          <div class="step-body">
+            <div class="triptych">
+              ${preview("Input", {
+                provider: data.provider,
+                model: data.model,
+                tolerance_percent: data.token_budget_tolerance_percent,
+                enforce_token_budget: data.enforce_token_budget
+              })}
+              ${preview("Process", "We estimate the full workflow before any model is called. This estimate is deliberately conservative: it reserves room for all planned model calls, retrieved standards chunks, graph context, report drafting, and a safety margin. The token cap is the estimate plus the configured tolerance. If a later prompt would push the run above that cap, the workflow stops before sending the next model call.")}
+              ${preview("Output", data)}
+            </div>
+          </div>
+        </details>`;
+      }
+
+      function renderJob(job) {
+        statusEl.textContent = `Job ${job.job_id}: ${job.status}`;
+        metricsEl.innerHTML = [
+          metric("Job", job.job_id),
+          metric("Status", job.status),
+          metric("Provider", job.provider),
+          metric("Model", job.model),
+          metric("Token cap", job.preflight?.allowed_total_tokens ?? "n/a"),
+          metric("Elapsed", formatDuration(elapsedSeconds(job.created_at))),
+          metric("ETA", etaLabel(job)),
+          metric("Current step", job.current_step || "Starting"),
+        ].join("");
+        if (job.status !== "completed") {
+          const partialSteps = (job.partial_steps || []).map((step, index) => renderStep(step, index)).join("");
+          setWorkflowHtml(`${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${partialSteps}${renderJobStep(job, (job.partial_steps || []).length + 1)}`);
+        }
+      }
+
+      function failureDetails(job) {
+        const gateStep = [...(job.partial_steps || [])].reverse().find((step) =>
+          String(step.name || "").toLowerCase().includes("quality gate failed")
+        );
+        const gate = gateStep?.output?.quality_gate;
+        const issues = gate?.issues || [];
+        const human = humanizeFailure(job, gateStep, gate, issues);
+        return {
+          title: human.title,
+          message: human.message,
+          whatWentWrong: human.whatWentWrong,
+          whyItHappened: human.whyItHappened,
+          failedStep: gateStep?.name || job.current_step,
+          operatorFixes: human.operatorFixes,
+          systemFixes: human.systemFixes,
+          issues,
+          rawError: job.error,
+          technicalSummary: gate?.summary,
+        };
+      }
+
+      function humanizeFailure(job, gateStep, gate, issues) {
+        const gateName = String(gate?.gate || "");
+        const fields = issues.map((issue) => String(issue.field || ""));
+        const isRiskAnswer = gateName === "risk_answer_output" || String(gateStep?.name || "").includes("risk answer");
+        const hasMatrixMissing = fields.some((field) => field.startsWith("risk_control_matrix"));
+        const hasRawOutput = fields.includes("raw_model_output");
+        if (isRiskAnswer && hasMatrixMissing) {
+          return {
+            title: "The model could not produce a complete risk matrix",
+            message: "The standards search found relevant material, but the selected model did not turn it into a complete risk/control matrix after the allowed repair attempts.",
+            whatWentWrong: [
+              "The answer missed required business fields in one or more matrix rows: gap, threat, vulnerability, risk, controls, or evidence.",
+              "Because those fields are needed for traceability, the workflow stopped instead of producing a report from incomplete facts."
+            ],
+            whyItHappened: [
+              "The model likely struggled with the prompt content or returned a different structure than the workflow contract.",
+              "If graph hints were noisy or too generic, they can distract a local model from the cleaner standards excerpts."
+            ],
+            operatorFixes: [
+              "Do not approve or use this run.",
+              "Retry with a stronger model after the system owner has reviewed retrieval and prompt quality."
+            ],
+            systemFixes: [
+              "Inspect the prompt input for the failed step and remove noisy graph hints before they reach the model.",
+              "Improve the repair prompt or output normalizer so useful answers are either corrected safely or rejected with a clear reason."
+            ]
+          };
+        }
+        if (isRiskAnswer && hasRawOutput) {
+          return {
+            title: "The model did not return usable risk data",
+            message: "The selected model returned text that could not be safely read as the required risk-analysis structure.",
+            whatWentWrong: ["The response was malformed, off-topic, or not valid structured output."],
+            whyItHappened: ["The prompt may be too large, the context may be noisy, or the selected model may be too weak for this step."],
+            operatorFixes: ["Do not approve this run.", "Retry after the system owner has reduced prompt noise or selected a stronger model."],
+            systemFixes: ["Reduce prompt size, keep only validated evidence, and strengthen the repair instruction for this step."]
+          };
+        }
+        if (gateName === "final_paragraph_output") {
+          return {
+            title: "The report draft failed quality checks",
+            message: "The model did not produce the required business report sections from the validated facts.",
+            whatWentWrong: ["One or more required report sections were missing, generic, or inconsistent with the validated assessment facts."],
+            whyItHappened: ["The report-writing prompt or selected model did not follow the expected report contract."],
+            operatorFixes: ["Do not approve this report draft."],
+            systemFixes: ["Inspect the final report prompt and repair step before relying on this output."]
+          };
+        }
+        if (gateName === "workflow_step_payload") {
+          return {
+            title: "A workflow step passed too much internal data forward",
+            message: "The workflow stopped because one step produced data that was too large, too technical, or polluted with debug details to safely become the next step's input.",
+            whatWentWrong: [
+              "A step handoff contained oversized data, full prompt text, raw model output, or debug-only fields.",
+              "That would make the workflow hard to understand and could confuse later model calls."
+            ],
+            whyItHappened: [
+              "The workflow mixed development/debug data with the business data that should move between steps.",
+              "Each step needs a compact handoff object and a separate full-detail debug artifact."
+            ],
+            operatorFixes: ["Do not approve this run. Ask the solution owner to compact the failed step before retrying."],
+            systemFixes: ["Remove full prompts, debug objects, raw responses, and oversized retrieval dumps from normal step input/output. Keep them only behind explicit full-detail debug views."]
+          };
+        }
+        return {
+          title: gate ? "The workflow failed a quality check" : "The workflow failed",
+          message: gate?.summary || job.error || "The workflow stopped before producing a valid result.",
+          whatWentWrong: issues.length ? [...new Set(issues.map((issue) => issue.message || "A required check failed."))] : ["The workflow stopped before producing a valid result."],
+          whyItHappened: ["A required workflow step returned output that did not match the expected contract."],
+          operatorFixes: [...new Set(issues.map((issue) => issue.operator_fix).filter(Boolean))],
+          systemFixes: [...new Set(issues.map((issue) => issue.system_fix).filter(Boolean))]
+        };
+      }
+
+      function showFailureModal(details) {
+        const uniqueOperator = [...new Set(details.operatorFixes || [])];
+        const uniqueSystem = [...new Set(details.systemFixes || [])];
+        failureBodyEl.innerHTML = `
+          <p><strong>${escapeHtml(details.message || "The workflow failed.")}</strong></p>
+          ${details.failedStep ? `<p>Failed step: ${escapeHtml(details.failedStep)}</p>` : ""}
+          <h3>What went wrong</h3>
+          <ul>${(details.whatWentWrong || ["The workflow stopped before producing a valid result."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          <h3>Why it probably happened</h3>
+          <ul>${(details.whyItHappened || ["A workflow step returned output that did not match the expected contract."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          <h3>Operator action</h3>
+          <ul>${(uniqueOperator.length ? uniqueOperator : ["Do not approve this run. Review the failed workflow step and retry after correcting the input or source evidence."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          <h3>System owner action</h3>
+          <ul>${(uniqueSystem.length ? uniqueSystem : ["Inspect the failed quality gate and adjust the workflow design, prompt, retrieval, or validator before relying on this output."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          ${details.rawError ? `<details class="technical-details"><summary>Technical details</summary><pre>${escapeHtml(details.rawError)}</pre></details>` : ""}
+        `;
+        document.querySelector("#failureTitle").textContent = details.title || "Workflow failed";
+        failureModalEl.classList.add("open");
+      }
+
+      function closeFailureModal() {
+        failureModalEl.classList.remove("open");
+      }
+
+      function renderJobStep(job, number) {
+        const description = jobDescription(job.status);
+        return `<details class="step">
+            ${renderStepSummary(number, "Background workflow job", description, job.status)}
+            <div class="step-body">
+              <div class="triptych">
+                ${preview("Input", { job_id: job.job_id, provider: job.provider, model: job.model })}
+                ${preview("Process", runningExplanation(job))}
+                ${preview("Output", {
+                  status: job.status,
+                  current_step: job.current_step,
+                  completed_steps: (job.partial_steps || []).length,
+                  error: job.error
+                })}
+              </div>
+            </div>
+          </details>`;
+      }
+
+
+      function renderStep(step, index) {
+        const description = friendlyStepDescription(step.name, step.explanation);
+        return `<details class="step">
+          ${renderStepSummary(index + 1, step.name, description, step.tool)}
+          <div class="step-body">
+            <div class="triptych">
+              ${preview("Input", step.input)}
+              ${preview("Process", step.process)}
+              ${preview("Output", step.output)}
+            </div>
+          </div>
+        </details>`;
+      }
+
+      function renderStepSummary(number, name, description, tool) {
+        return `<summary>
+          <span class="num">${escapeHtml(number)}</span>
+          <span class="step-title-line">
+            <span class="step-name">${escapeHtml(name)}</span>
+            <span class="info-dot" tabindex="0" title="${escapeHtml(description)}" aria-label="${escapeHtml(description)}" data-tip="${escapeHtml(description)}">i</span>
+          </span>
+          <span class="tool">${escapeHtml(tool)}</span>
+        </summary>`;
+      }
+
+      function jobDescription(status) {
+        const descriptions = {
+          queued: "The run is waiting for its turn. Nothing is being written yet.",
+          running: "The workflow is running in the background while this page checks for updates, so the browser stays usable.",
+          cancelling: "The workflow is stopping and the local model is being asked to unload from the GPU.",
+          cancelled: "The workflow was stopped before producing a final result.",
+          failed: "The workflow stopped because one of the steps returned an error.",
+          completed: "The workflow finished and produced a result for review."
+        };
+        return descriptions[status] || "This shows the current background run and its latest status.";
+      }
+
+      function runningExplanation(job) {
+        if (job.status === "completed") return "The workflow has finished successfully and the final result is ready for review.";
+        if (job.status === "cancelled") return "The workflow was stopped before producing a final result.";
+        if (job.status === "failed") return "The workflow stopped because one of the steps failed. Check the output block for the error.";
+        if (job.status === "cancelling") return "The workflow is stopping now. The local model is being asked to unload from the GPU.";
+        return `The workflow is still running. Current activity: ${job.current_step || "starting"}. This page will keep polling until the job finishes, fails, or is cancelled.`;
+      }
+
+      function friendlyStepDescription(name, fallback) {
+        const descriptions = {
+          "Read assessment input": "This step takes the vendor assessment data from the source system and turns it into the standard format used by the workflow.",
+          "Clean and sort questionnaire answers": "This step cleans the vendor and analyst comments, then separates answers into strengths, weaknesses, and items that need clarification.",
+          "Create risk questions from weak answers": "This step turns each weak answer into a search question that can be checked against the standards library.",
+          "Collect risk answers for report drafting": "This step collects all risk answers into one smaller evidence package for report writing.",
+          "Ask model to draft report paragraphs": "This step writes readable report text from the assessment data and retrieved evidence. It should not invent facts outside that material.",
+          "Prepare final result for the application": "This step packages the reviewed output into the structured result that your application can later store."
+        };
+        if (name.startsWith("Plan searches for ")) {
+          return "This step takes one risk question and decides which smaller searches are needed before looking in the standards library.";
+        }
+        if (name.startsWith("Search standards evidence for ")) {
+          return "This step searches the standards text and graph for evidence that matches the risk question from the previous step.";
+        }
+        if (name.startsWith("Ask model to write risk answer for ")) {
+          return "This step asks the selected model to turn the retrieved evidence into threats, vulnerabilities, risks, controls, and citations.";
+        }
+        if (name.startsWith("Handle missing evidence for ")) {
+          return "This step stops the workflow from guessing when the standards library did not return useful evidence for the risk question.";
+        }
+        return descriptions[name] || fallback || "This step processes part of the assessment and passes its result to the next step.";
+      }
+
+      function preview(title, value) {
+        const rawText = value === undefined || value === null
+          ? "[No data supplied for this part of the step]"
+          : typeof value === "string"
+            ? value
+            : JSON.stringify(value, null, 2);
+        const text = rawText || "[No data supplied for this part of the step]";
+        const previewId = `preview-${++previewCounter}`;
+        previewStore.set(previewId, { title, text });
+        const summary = `<summary><span>${escapeHtml(title)}</span><button class="preview-expand" type="button" onclick="openPreview('${previewId}', event)">Expand</button></summary>`;
+        if (text.length > 9000) {
+          const inlinePreview = `${text.slice(0, 1200)}\n\n...[large value: ${text.length} characters. Use Expand to inspect the full content in a separate window.]`;
+          return `<details class="preview" open>${summary}<pre>${escapeHtml(inlinePreview)}</pre></details>`;
+        }
+        return `<details class="preview" open>${summary}<pre>${escapeHtml(text)}</pre></details>`;
+      }
+
+      function openPreview(previewId, event) {
+        if (event) event.stopPropagation();
+        const item = previewStore.get(previewId);
+        if (!item) return;
+        openTextWindow(item.title, item.text);
+      }
+
+      function openTextWindow(title, text) {
+        const previewWindow = window.open("", "_blank", "width=1180,height=860");
+        if (!previewWindow) return;
+        previewWindow.document.write(`<!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <title>${escapeHtml(title)}</title>
+              <style>
+                body { margin: 0; color: #1d2730; background: #f6f7f4; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+                header { position: sticky; top: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid #d8ded6; background: #fbfcfa; }
+                h1 { margin: 0; font-size: 16px; }
+                button { border: 1px solid #0f766e; background: #0f766e; color: #fff; border-radius: 6px; padding: 8px 12px; font-weight: 800; cursor: pointer; }
+                pre { margin: 0; padding: 16px; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; }
+              </style>
+            </head>
+            <body>
+              <header><h1>${escapeHtml(title)}</h1><button onclick="window.close()">Close</button></header>
+              <pre>${escapeHtml(text)}</pre>
+            </body>
+          </html>`);
+        previewWindow.document.close();
+      }
+
+      function expandFinalResult() {
+        if (!lastCompletedRun) return;
+        openTextWindow("Current Run JSON Contract", JSON.stringify(lastCompletedRun.final_result, null, 2));
+      }
+
+      function openStorylineReport() {
+        if (!lastCompletedRun) return;
+        openTextWindow("Business Storyline Report", formatStorylineReport(lastCompletedRun.final_result || {}));
+      }
+
+      function openCodexReviewPacket() {
+        if (!lastCompletedRun) return;
+        openTextWindow("Codex Review Packet", buildCodexReviewPacket(lastCompletedRun));
+      }
+
+      function formatStorylineReport(finalResult) {
+        const report = finalResult.storyline_report || finalResult.draft_sections?.storyline_report || {};
+        const lines = [
+          report.title || "Gap-to-risk storyline report",
+          "",
+          report.purpose || "Shows how each weak questionnaire answer became a risk analysis.",
+          "",
+        ];
+        const rows = Array.isArray(report.per_gap) ? report.per_gap : [];
+        if (!rows.length) {
+          lines.push("[No storyline report stored in this run.]");
+          return lines.join("\n");
+        }
+        rows.forEach((row, index) => {
+          const story = row.gap_to_risk_story || {};
+          const control = row.linked_control || {};
+          lines.push(`${index + 1}. ${row.question_id || story.question_id || "Question"} - ${control.framework || ""} ${control.control_id || ""} ${control.title || ""}`.trim());
+          lines.push(`Gap: ${story.gap_story || "n/a"}`);
+          lines.push(`Business meaning: ${story.business_meaning || "n/a"}`);
+          lines.push(`Risk logic: ${story.risk_logic || "n/a"}`);
+          lines.push(`Control logic: ${story.control_logic || "n/a"}`);
+          lines.push(`Resilience: ${story.resilience_logic || "n/a"}`);
+          lines.push(`Residual conclusion: ${story.residual_conclusion || "n/a"}`);
+          lines.push("");
+        });
+        lines.push("Overall conclusion:");
+        lines.push(report.overall_conclusion || "n/a");
+        return lines.join("\n");
+      }
+
+      function buildCodexReviewPacket(run) {
+        const sourceInput = completedRunInput(run);
+        const compactSteps = (run.steps || []).map((step, index) => ({
+          number: index + 1,
+          name: step.name,
+          tool: step.tool,
+          explanation: step.explanation,
+          input_summary: compactForReview(step.input),
+          output_summary: compactForReview(step.output),
+        }));
+        const packet = {
+          review_request: {
+            purpose: "Development-only independent quality review of one complete GraphRAG assessment result.",
+            instruction: [
+              "Act as a critical cybersecurity/GRC reviewer.",
+              "Compare the initial input, workflow evidence, and final result.",
+              "Give an honest estimate of whether the final result is aligned with a correct analysis.",
+              "Call out weak reasoning, missing evidence, unsupported conclusions, bad citations, and overconfident wording.",
+              "Separate what is supported by retrieved evidence from what looks like model reasoning.",
+              "Return a score from 0 to 100, confidence level, key issues, and concrete fixes."
+            ],
+            expected_review_sections: [
+              "Overall alignment score",
+              "Evidence and citation quality",
+              "Threat/vulnerability/risk correctness",
+              "Control recommendation quality",
+              "Business conclusion quality",
+              "Unsupported or missing conclusions",
+              "Recommended fixes before analyst approval"
+            ],
+            limitation: "This web app cannot directly call the Codex desktop agent. Paste this packet into Codex for review, or wire it to a future authorized review API."
+          },
+          initial_input_from_simulated_sql: sourceInput,
+          run_metadata: {
+            run_id: run.run_id,
+            created_at: run.created_at,
+            provider: run.provider,
+            model: run.model,
+            assessment_id: run.assessment_id,
+            vendor_id: run.vendor_id,
+            cost_estimate: run.cost_estimate,
+            token_budget: run.token_budget,
+          },
+          workflow_steps_summary: compactSteps,
+          final_result: run.final_result,
+        };
+        return JSON.stringify(packet, null, 2);
+      }
+
+      function compactForReview(value) {
+        const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        if (!text) return "";
+        return text.length > 5000 ? `${text.slice(0, 5000)}\n...[truncated for review packet]` : value;
+      }
+
+      function safeJsonParse(text, fallback) {
+        try {
+          return JSON.parse(text);
+        } catch {
+          return fallback;
+        }
+      }
+
+      function completedRunInput(run) {
+        const firstStep = (run.steps || [])[0] || {};
+        const stepInput = firstStep.input || {};
+        const stepOutput = firstStep.output || {};
+        return stepInput.payload || stepOutput.normalized_packet || safeJsonParse(packetEl.value, {});
+      }
+
+      function metric(label, value) {
+        return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
+      }
+
+      function estimatePart(label, value) {
+        return `<span><span class="label">${escapeHtml(label)}</span>${escapeHtml(value)}</span>`;
+      }
+
+      function renderCostEstimate(data) {
+        if (!data) {
+          costEstimateEl.innerHTML = estimatePart("Estimate", "No estimate yet");
+          return;
+        }
+        costEstimateEl.innerHTML = [
+          estimatePart("Model", data.model),
+          estimatePart(
+            "Expected in/out",
+            `${formatNumber(data.estimated_input_tokens)} / ${formatNumber(data.estimated_output_tokens)}`,
+          ),
+          estimatePart("Hard cap", formatNumber(data.allowed_total_tokens)),
+          estimatePart("Total cost", `USD ${costLabel(data)}`),
+        ].join('<span class="sep">|</span>');
+      }
+
+      function tokenComparisonLabel(tokenBudget) {
+        if (!tokenBudget) return "n/a";
+        const actual = tokenBudget.actual_total_tokens ?? 0;
+        const estimate = tokenBudget.preflight_estimated_total_tokens ?? 0;
+        const diff = tokenBudget.difference_percent ?? 0;
+        const sign = diff > 0 ? "+" : "";
+        return `${actual} / ${estimate} (${sign}${diff}%)`;
+      }
+
+      function costLabel(data) {
+        if (!data) return "$0";
+        const usd = Number(data.estimated_cost_usd || 0);
+        if (!usd) return "$0";
+        return `$${usd.toFixed(6)}`;
+      }
+
+      function formatNumber(value) {
+        return Number(value || 0).toLocaleString("en-US");
+      }
+
+      function etaLabel(job) {
+        if (!job || !["queued", "running", "cancelling"].includes(job.status)) return "n/a";
+        const estimate = historicalDurationEstimate(job.provider, job.model);
+        if (!estimate) return "No run history yet";
+        const elapsed = elapsedSeconds(job.created_at);
+        const remaining = Math.max(0, estimate - elapsed);
+        return `${formatDuration(remaining)} left (${formatDuration(estimate)} typical)`;
+      }
+
+      function historicalDurationEstimate(provider, model) {
+        const validRuns = runHistory.filter((run) => Number(run.duration_seconds) > 0);
+        const sameModel = validRuns.filter((run) => run.provider === provider && run.model === model);
+        const sample = sameModel.length ? sameModel : validRuns;
+        if (!sample.length) return null;
+        return median(sample.map((run) => Number(run.duration_seconds)));
+      }
+
+      function median(values) {
+        const sorted = values.slice().sort((left, right) => left - right);
+        const middle = Math.floor(sorted.length / 2);
+        return sorted.length % 2
+          ? sorted[middle]
+          : (sorted[middle - 1] + sorted[middle]) / 2;
+      }
+
+      function elapsedSeconds(startedAt) {
+        const started = Date.parse(startedAt || "");
+        if (Number.isNaN(started)) return 0;
+        return Math.max(0, (Date.now() - started) / 1000);
+      }
+
+      function formatDuration(seconds) {
+        const value = Number(seconds);
+        if (!Number.isFinite(value) || value <= 0) return "0s";
+        const rounded = Math.round(value);
+        const minutes = Math.floor(rounded / 60);
+        const rest = rounded % 60;
+        return minutes ? `${minutes}m ${rest}s` : `${rest}s`;
+      }
+
+      function setWorkflowHtml(html) {
+        const previousState = detailsState();
+        workflowEl.innerHTML = html;
+        restoreDetailsState(previousState);
+      }
+
+      function detailsState() {
+        const state = new Map();
+        workflowEl.querySelectorAll("details").forEach((details, index) => {
+          state.set(detailsKey(details, index), details.open);
+        });
+        return state;
+      }
+
+      function restoreDetailsState(state) {
+        workflowEl.querySelectorAll("details").forEach((details, index) => {
+          const key = detailsKey(details, index);
+          if (state.has(key)) details.open = state.get(key);
+        });
+      }
+
+      function detailsKey(details, index) {
+        const summary = details.querySelector("summary");
+        const text = summary ? summary.textContent.replace(/\s+/g, " ").trim() : "";
+        return `${index}:${text}`;
+      }
+
+      function clearOutput() {
+        workflowEl.innerHTML = `<div class="empty">No run yet.</div>`;
+        lastCompletedRun = null;
+        updateFinalActions();
+        closeEvidenceInline();
+        metricsEl.innerHTML = "";
+        statusEl.textContent = "Ready. No workflow has run yet.";
+        clearCostEstimate();
+      }
+
+      function clearCostEstimate() {
+        lastPreflight = null;
+        costEstimateEl.innerHTML = estimatePart("Estimate", "Needs update");
+      }
+
+      async function refreshRuns() {
+        const runs = await getJson("/api/workflows/complete-assessment/runs");
+        runHistory = runs;
+        renderSavedRuns(runs);
+      }
+
+      function renderSavedRuns(runs) {
+        const list = Array.isArray(runs) ? runs : [];
+        if (!list.length) {
+          runsEl.innerHTML = `
+            <div class="runs-empty">
+              <strong>No completed runs to compare yet.</strong><br />
+              Run the workflow with one or more models. Completed runs will appear here with
+              model, cost, duration, and buttons to inspect or compare the result.
+            </div>`;
+          return;
+        }
+        const rows = list.map((run) => {
+          const status = savedRunStatus(run);
+          return `<tr>
+            <td>${escapeHtml(formatRunDate(run.created_at))}</td>
+            <td>${escapeHtml(run.provider || "n/a")}:${escapeHtml(run.model || "n/a")}</td>
+            <td><span class="run-status ${status === "Incomplete" ? "incomplete" : ""}">${escapeHtml(status)}</span></td>
+            <td>${escapeHtml(savedRunCost(run))}</td>
+            <td>${escapeHtml(formatDuration(run.duration_seconds))}</td>
+            <td class="run-actions">
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'summary')">View</button>
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'storyline')">Storyline</button>
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'evidence')">Evidence</button>
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'json')">JSON</button>
+            </td>
+          </tr>`;
+        }).join("");
+        runsEl.innerHTML = `
+          <div class="runs-help">
+            Use this to compare completed workflow runs across models or settings. The table is a
+            readable history; JSON is only there when you need the full technical contract.
+          </div>
+          <table class="runs-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Cost</th>
+                <th>Duration</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }
+
+      function savedRunStatus(run) {
+        if (run.completed_at || run.duration_seconds) return "Completed";
+        return "Incomplete";
+      }
+
+      function savedRunCost(run) {
+        const value = Number(run.price ?? run.cost_estimate?.estimated_cost_usd ?? 0);
+        return value ? `$${value.toFixed(6)}` : "$0";
+      }
+
+      function formatRunDate(value) {
+        const date = new Date(value || "");
+        if (Number.isNaN(date.getTime())) return "n/a";
+        return date.toLocaleString([], {
+          month: "short",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      async function openSavedRun(runId, mode) {
+        const run = await getJson(`/api/workflows/complete-assessment/runs/${encodeURIComponent(runId)}`);
+        if (mode === "json") {
+          openTextWindow(`Saved run JSON - ${runId}`, JSON.stringify(run, null, 2));
+          return;
+        }
+        if (mode === "storyline") {
+          openTextWindow(`Saved run storyline - ${runId}`, formatStorylineReport(run.final_result || {}));
+          return;
+        }
+        if (mode === "evidence") {
+          showEvidenceInline(`Saved run evidence - ${runId}`, formatEvidenceReport(run));
+          return;
+        }
+        openTextWindow(`Saved run summary - ${runId}`, savedRunSummary(run));
+      }
+
+      function savedRunSummary(run) {
+        const result = run.final_result || {};
+        const sections = result.draft_sections || result;
+        const summary = sections.management_summary || result.management_summary || result.summary || "";
+        const exposure = sections.risk_exposure || result.risk_exposure || "";
+        const conclusion = sections.conclusion || result.conclusion || "";
+        const storyline = formatStorylineReport(result);
+        const lines = [
+          `Run: ${run.run_id}`,
+          `Created: ${run.created_at || "n/a"}`,
+          `Model: ${run.provider || "n/a"}:${run.model || "n/a"}`,
+          `Assessment: ${run.assessment_id || "n/a"} / Vendor: ${run.vendor_id || "n/a"}`,
+          `Cost: ${savedRunCost(run)}`,
+          `Duration: ${formatDuration(run.duration_seconds)}`,
+          "",
+          "Management summary:",
+          summary || "[No management summary stored in this run.]",
+          "",
+          "Risk exposure:",
+          exposure || "[No risk exposure paragraph stored in this run.]",
+          "",
+          "Conclusion:",
+          conclusion || "[No conclusion paragraph stored in this run.]",
+          "",
+          "Storyline report:",
+          storyline,
+          "",
+          "Evidence visibility:",
+          "Use the Evidence button to see which Qdrant, keyword/BM25, and Neo4j/graph context was actually available to the model.",
+        ];
+        return lines.join("\n");
+      }
+
+      function openEvidenceReport() {
+        if (!lastCompletedRun) return;
+        showEvidenceInline("Current run evidence context", formatEvidenceReport(lastCompletedRun));
+      }
+
+      function showEvidenceInline(title, text) {
+        const previewId = `evidence-${++previewCounter}`;
+        previewStore.set(previewId, { title, text });
+        const shortText = text.length > 6000
+          ? `${text.slice(0, 6000)}\n\n...[evidence report continues. Use Expand for the full report.]`
+          : text;
+        evidenceInlineEl.classList.add("open");
+        evidenceInlineEl.innerHTML = `
+          <div class="evidence-inline-head">
+            <strong>${escapeHtml(title)}</strong>
+            <div class="evidence-inline-actions">
+              <button class="secondary small" type="button" onclick="openPreview('${previewId}', event)">Expand</button>
+              <button class="secondary small" type="button" onclick="closeEvidenceInline()">Close</button>
+            </div>
+          </div>
+          <pre>${escapeHtml(shortText)}</pre>
+        `;
+      }
+
+      function closeEvidenceInline() {
+        evidenceInlineEl.classList.remove("open");
+        evidenceInlineEl.innerHTML = "";
+      }
+
+      function handleQuestionnaireMessage(event) {
+        if (event.origin !== window.location.origin) return;
+        const data = event.data || {};
+        if (data.type !== "foundation-questionnaire-saved" || !data.packet) return;
+        useSavedQuestionnairePacket(data.packet);
+      }
+
+      function handleQuestionnaireStorage(event) {
+        if (event.key !== savedQuestionnaireKey || !event.newValue) return;
+        try {
+          useSavedQuestionnairePacket(JSON.parse(event.newValue));
+        } catch {
+          statusEl.innerHTML = `<span class="warning">Saved questionnaire could not be loaded into the workflow.</span>`;
+        }
+      }
+
+      function useSavedQuestionnairePacket(packet) {
+        packetEl.value = JSON.stringify(packet, null, 2);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Saved user questionnaire loaded into this workflow. The next run will use it.";
+        estimateCostQuietly();
+      }
+
+      function formatEvidenceReport(run) {
+        const steps = Array.isArray(run.steps) ? run.steps : [];
+        const evidenceSteps = steps
+          .map((step, index) => ({ step, index }))
+          .filter((item) => String(item.step.name || "").startsWith("Search standards evidence for "));
+        const lines = [
+          "Evidence context actually available to the model",
+          "",
+          `Run: ${run.run_id || "n/a"}`,
+          `Created: ${run.created_at || "n/a"}`,
+          `Model: ${run.provider || "n/a"}:${run.model || "n/a"}`,
+          `Assessment: ${run.assessment_id || "n/a"} / Vendor: ${run.vendor_id || "n/a"}`,
+          "",
+          "How to read this:",
+          "Dense means Qdrant/vector search. Keyword means BM25-style keyword search. Graph means Neo4j/GraphRAG rows.",
+          "Only prompt-selected evidence was sent to the model. Retrieved-but-not-selected evidence was available to the retriever but not used in the model prompt.",
+          "",
+        ];
+        if (!evidenceSteps.length) {
+          lines.push("[No standards evidence search steps were stored in this run.]");
+          return lines.join("\n");
+        }
+        evidenceSteps.forEach(({ step, index }, itemIndex) => {
+          const output = step.output || {};
+          const promptEvidence = output.prompt_evidence || {};
+          const retrieved = Array.isArray(output.retrieved_chunks) ? output.retrieved_chunks : [];
+          const promptSources = Array.isArray(promptEvidence.prompt_sources) ? promptEvidence.prompt_sources : [];
+          const graphRows = Array.isArray(output.graph_context_rows) ? output.graph_context_rows : [];
+          const rawGraphRows = Number(output.raw_graph_row_count || 0);
+          const promptStep = nextPromptStep(steps, index);
+          const promptChars = promptStep?.output?.model_prompt?.total_characters_sent_to_model;
+          const selectedIds = new Set(promptSources.map((source) => source.chunk_id || source.source_id).filter(Boolean));
+          const methodByChunk = retrievalMethodMap(retrieved);
+          const retrievedCounts = countBy(retrieved, (chunk) => chunk.retrieval_method || "unknown");
+          const selectedCounts = countBy(promptSources, (source) => methodByChunk.get(source.chunk_id) || source.retrieval_method || "unknown");
+          lines.push(`${itemIndex + 1}. ${step.name || "Evidence search"}`);
+          lines.push(`Purpose: ${friendlyStepDescription(step.name || "", step.explanation || "")}`);
+          lines.push(`Prompt size sent to model: ${promptChars ? `${formatNumber(promptChars)} characters` : "not recorded"}`);
+          lines.push(`Retrieved evidence: ${retrieved.length} total (${formatCountMap(retrievedCounts)})`);
+          lines.push(`Prompt-selected evidence: ${promptSources.length || promptEvidence.prompt_source_count || 0} total (${formatCountMap(selectedCounts)})`);
+          lines.push(`Graph/Neo4j: ${rawGraphRows} raw rows returned, ${graphRows.length} rows sent to model prompt`);
+          if (rawGraphRows && !graphRows.length) {
+            lines.push("Graph effect: Neo4j returned candidate rows, but the filter did not consider them clean or relevant enough for the model prompt. The final answer for this step was therefore based on dense/keyword text evidence, not graph rows.");
+          } else if (graphRows.length) {
+            lines.push("Graph effect: selected graph rows were sent to the model and could influence the answer.");
+          } else {
+            lines.push("Graph effect: no graph context influenced this step.");
+          }
+          lines.push("");
+          lines.push("Prompt-selected sources sent to the model:");
+          if (!promptSources.length) {
+            lines.push("- [None selected]");
+          } else {
+            promptSources.forEach((source) => {
+              lines.push(formatEvidenceSource(source, methodByChunk.get(source.chunk_id) || source.retrieval_method || "unknown"));
+            });
+          }
+          const notSelected = retrieved.filter((chunk) => !selectedIds.has(chunk.chunk_id || chunk.source_id)).slice(0, 4);
+          if (notSelected.length) {
+            lines.push("");
+            lines.push("Retrieved but not sent to the model:");
+            notSelected.forEach((source) => {
+              lines.push(formatEvidenceSource(source, source.retrieval_method || "unknown"));
+            });
+          }
+          if (graphRows.length) {
+            lines.push("");
+            lines.push("Graph rows sent to the model:");
+            graphRows.slice(0, 8).forEach((row, rowIndex) => {
+              lines.push(`- G${rowIndex + 1}: ${compactGraphRow(row)}`);
+            });
+          }
+          lines.push("");
+        });
+        return lines.join("\n");
+      }
+
+      function nextPromptStep(steps, startIndex) {
+        return steps.slice(startIndex + 1).find((step) => String(step.name || "").startsWith("Prepare model prompt for "));
+      }
+
+      function retrievalMethodMap(retrieved) {
+        const map = new Map();
+        retrieved.forEach((chunk) => {
+          if (chunk.chunk_id) map.set(chunk.chunk_id, chunk.retrieval_method || "unknown");
+        });
+        return map;
+      }
+
+      function countBy(items, keyFn) {
+        return items.reduce((counts, item) => {
+          const key = keyFn(item) || "unknown";
+          counts[key] = (counts[key] || 0) + 1;
+          return counts;
+        }, {});
+      }
+
+      function formatCountMap(counts) {
+        const entries = Object.entries(counts || {}).filter((entry) => entry[1]);
+        if (!entries.length) return "none";
+        return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
+      }
+
+      function formatEvidenceSource(source, method) {
+        const metadata = source.metadata || {};
+        const score = source.score === undefined || source.score === null ? "n/a" : Number(source.score).toFixed(6);
+        const sourceName = source.source || metadata.source_path || metadata.filename || "unknown source";
+        const control = metadata.control_id ? `control ${metadata.control_id}` : "no control id";
+        const page = metadata.page_or_section ? `page/section ${metadata.page_or_section}` : "no page/section";
+        const why = source.why_selected ? ` Why selected: ${source.why_selected}` : "";
+        const previewText = source.text_preview || source.text || "";
+        const preview = previewText ? `\n  ${previewText}` : "";
+        return `- ${source.source_id || source.id || "source"} [${method}] score ${score}; ${control}; ${page}; ${sourceName}.${why}${preview}`;
+      }
+
+      function compactGraphRow(row) {
+        const text = JSON.stringify(row);
+        return text.length > 500 ? `${text.slice(0, 500)} [...]` : text;
+      }
+
+      function setBusy(busy, text) {
+        document.querySelectorAll("button, select, input, textarea").forEach((item) => {
+          item.disabled = busy;
+        });
+        document.querySelector("#cancel").disabled = !busy || !currentJobId;
+        document.querySelector("#run").disabled = busy;
+        document.querySelector("#estimateCost").disabled = busy;
+        document.querySelector("#refreshRuns").disabled = busy;
+        if (!busy) updateFinalActions();
+        if (text) statusEl.textContent = text;
+      }
+
+      function updateFinalActions() {
+        const enabled = Boolean(lastCompletedRun);
+        if (!enabled) {
+          currentRunActionsEl.className = "current-result-actions empty";
+          currentRunActionsEl.textContent = "No current run result yet.";
+          return;
+        }
+        currentRunActionsEl.className = "current-result-actions";
+        currentRunActionsEl.innerHTML = `
+          <strong>Current run result</strong>
+          <button class="secondary" type="button" onclick="expandFinalResult()">View JSON</button>
+          <button class="secondary" type="button" onclick="openStorylineReport()">Storyline</button>
+          <button class="secondary" type="button" onclick="openEvidenceReport()">Evidence</button>
+          <button class="secondary" type="button" onclick="openCodexReviewPacket()">Codex review packet</button>
+        `;
+      }
+
+      function escapeHtml(value) {
+        return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      }
+
+      window.estimateCost = estimateCost;
+      window.expandFinalResult = expandFinalResult;
+      window.openStorylineReport = openStorylineReport;
+      window.openEvidenceReport = openEvidenceReport;
+      window.closeEvidenceInline = closeEvidenceInline;
+      window.handleQuestionnaireMessage = handleQuestionnaireMessage;
+      window.openCodexReviewPacket = openCodexReviewPacket;
+      window.resetPacketToSample = resetPacketToSample;
+      providerEl.addEventListener("change", configureModels);
+      modelEl.addEventListener("change", refreshEstimateOrMarkDirty);
+      tokenToleranceEl.addEventListener("input", refreshEstimateOrMarkDirty);
+      enforceTokenBudgetEl.addEventListener("change", refreshEstimateOrMarkDirty);
+      saveApiKeyEl.addEventListener("click", saveLocalOpenAiKey);
+      forgetApiKeyEl.addEventListener("click", forgetLocalOpenAiKey);
+      document.querySelector("#run").addEventListener("click", runWorkflow);
+      document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
+      askCorpusEl.addEventListener("click", askCorpus);
+      expandCorpusAnswerEl.addEventListener("click", expandCorpusAnswer);
+      corpusQuestionEl.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          askCorpus();
+        }
+      });
+      closeFailureEl.addEventListener("click", closeFailureModal);
+      failureModalEl.addEventListener("click", (event) => {
+        if (event.target === failureModalEl) closeFailureModal();
+      });
+      const inlineApplyDbFormEl = document.querySelector("#applyDbForm");
+      if (inlineApplyDbFormEl) inlineApplyDbFormEl.addEventListener("click", () => applyDbFormToPacket());
+      const inlineAddQuestionEl = document.querySelector("#addQuestion");
+      if (inlineAddQuestionEl) inlineAddQuestionEl.addEventListener("click", () => addQuestion());
+      const inlineSaveQuestionnaireEl = document.querySelector("#saveQuestionnaire");
+      if (inlineSaveQuestionnaireEl) inlineSaveQuestionnaireEl.addEventListener("click", () => saveQuestionnaire());
+      const inlineLoadQuestionnaireEl = document.querySelector("#loadQuestionnaire");
+      if (inlineLoadQuestionnaireEl) inlineLoadQuestionnaireEl.addEventListener("click", () => loadSavedQuestionnaire());
+      const inlineResetDbScenarioEl = document.querySelector("#resetDbScenario");
+      if (inlineResetDbScenarioEl) inlineResetDbScenarioEl.addEventListener("click", () => resetQuestionnaireDefaults());
+      const inlineClearQuestionnaireEl = document.querySelector("#clearQuestionnaire");
+      if (inlineClearQuestionnaireEl) inlineClearQuestionnaireEl.addEventListener("click", () => clearQuestionnaire());
+      if (dbFormEl) {
+        dbFormEl.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-remove-question]");
+          if (!button) return;
+          removeQuestion(Number(button.dataset.removeQuestion));
+        });
+      }
+      packetEl.addEventListener("change", () => {
+        try {
+          applyPacketJson(packetEl.value, "Updated the optional form from the JSON.");
+        } catch (error) {
+          statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+        }
+      });
+      if (dbFormEl) {
+        dbFormEl.addEventListener("input", () => {
+          dbFormDirty = true;
+          clearCostEstimate();
+        });
+      }
+      window.addEventListener("message", handleQuestionnaireMessage);
+      window.addEventListener("storage", handleQuestionnaireStorage);
+      document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
+      loadSample().then(async () => {
+        await loadLocalOpenAiKey();
+        await estimateCostQuietly();
+        await refreshRuns();
+      });
+    </script>
+  </body>
+</html>

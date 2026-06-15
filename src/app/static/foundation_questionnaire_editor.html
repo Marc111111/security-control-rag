@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>User Questionnaire Editor</title>
+    <style>
+      :root {
+        --bg: #f6f7f4;
+        --panel: #fff;
+        --ink: #1d2730;
+        --muted: #687789;
+        --line: #d8ded6;
+        --accent: #0f766e;
+        --soft: #eef5f2;
+        --warn: #9a4d07;
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      header {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfa;
+      }
+      h1 { margin: 0; font-size: 16px; }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+      button {
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: #fff;
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+      button.secondary { background: #fff; color: var(--accent); }
+      button.small { padding: 5px 7px; font-size: 11px; }
+      .status {
+        flex: 0 0 auto;
+        min-height: 32px;
+        padding: 8px 12px;
+        color: var(--muted);
+        font-size: 12px;
+        border-bottom: 1px solid var(--line);
+        background: #fbfcfa;
+      }
+      .warning { color: var(--warn); }
+      main {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+        padding: 14px;
+      }
+      .note {
+        margin: 0 0 12px;
+        color: var(--muted);
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .form-section {
+        margin: 14px 0 8px;
+        padding-top: 12px;
+        border-top: 1px solid var(--line);
+        color: #25313d;
+        font-size: 13px;
+        font-weight: 900;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+      }
+      .field-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: var(--panel);
+      }
+      .field-card.wide { grid-column: 1 / -1; }
+      label {
+        display: block;
+        font-size: 12px;
+        font-weight: 800;
+        color: var(--muted);
+        margin-bottom: 4px;
+      }
+      .field-help {
+        margin: 0 0 7px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      input, select, textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+      }
+      textarea { min-height: 72px; resize: vertical; }
+      .empty {
+        border: 1px dashed #b9c9c4;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fbfcfa;
+        color: var(--muted);
+      }
+      @media (max-width: 760px) {
+        header { align-items: flex-start; flex-direction: column; }
+        .form-grid { grid-template-columns: 1fr; }
+        .field-card.wide { grid-column: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>User Questionnaire Editor</h1>
+      <div class="actions">
+        <button id="save" type="button">Save</button>
+        <button class="secondary" id="load" type="button">Load</button>
+        <button class="secondary" id="erase" type="button">Erase</button>
+        <button class="secondary" id="defaults" type="button">Default values</button>
+        <button class="secondary" id="addQuestion" type="button">Add question</button>
+        <button class="secondary" id="back" type="button">Back to workflow</button>
+        <button class="secondary" id="close" type="button">Close</button>
+      </div>
+    </header>
+    <div class="status" id="status">Loading default questionnaire...</div>
+    <main>
+      <p class="note">
+        Save writes this user questionnaire into local browser storage and sends it back to the
+        workflow page. The next workflow run uses the saved questionnaire.
+      </p>
+      <div id="form"></div>
+    </main>
+    <script>
+      const savedQuestionnaireKey = "foundationMock.savedQuestionnaire";
+      const savedScenarioKey = "foundationMock.savedDbScenario";
+      const formEl = document.querySelector("#form");
+      const statusEl = document.querySelector("#status");
+      let sample = null;
+      let packet = null;
+
+      async function loadDefaultOnStart() {
+        const response = await fetch("/api/mock/foundation-packet");
+        if (!response.ok) throw new Error(response.statusText);
+        sample = await response.json();
+        packet = clonePacket(sample);
+        renderForm();
+        statusEl.textContent = "Loaded default values. Use Load to open your saved user questionnaire.";
+      }
+
+      function renderForm() {
+        const tierAttributes = Object.fromEntries((packet.tier?.attributes || []).map((item) => [item.name, item]));
+        formEl.innerHTML = `
+          <div class="form-section">General context</div>
+          <div class="form-grid">
+            ${field("assessment_id", "Assessment ID", "Identifier for this assessment record.", packet.assessment_id)}
+            ${field("vendor.vendor_id", "Vendor ID", "Identifier for the assessed vendor.", packet.vendor?.vendor_id)}
+            ${field("vendor.name", "Vendor name", "Supplier name used in the assessment and report.", packet.vendor?.name)}
+            ${field("vendor.vendor_type", "Vendor type", "Supplier category, such as SaaS, hosting, consultancy, or HR provider.", packet.vendor?.vendor_type)}
+            ${field("vendor.business_relationship", "Business relationship", "What this vendor does for the organization and why it matters.", packet.vendor?.business_relationship, "textarea", true)}
+            ${field("vendor.country", "Country / region", "Where the vendor mainly operates or provides the service from.", packet.vendor?.country)}
+            ${field("vendor.services", "Services in scope", "Comma-separated services assessed in this questionnaire.", (packet.vendor?.services || []).join(", "), "textarea", true)}
+          </div>
+          <div class="form-section">Tier context</div>
+          <div class="form-grid">
+            ${field("tier.level", "Tier level", "Relationship criticality level from 1 to 4.", packet.tier?.level, "number")}
+            ${field("tier.definition", "Tier definition", "Plain-language reason why this vendor has the selected tier.", packet.tier?.definition, "textarea", true)}
+            ${tierField(tierAttributes, "company_size", "Company size", "Vendor size and operational footprint.")}
+            ${tierField(tierAttributes, "sensitive_data_access", "Sensitive data access", "Whether sensitive business, customer, employee, or regulated data is processed.")}
+            ${tierField(tierAttributes, "privileged_access", "Privileged access", "Whether the vendor can administer or deeply access internal systems.")}
+            ${tierField(tierAttributes, "geolocation", "Geolocation", "Region where the vendor operates or processes data.")}
+          </div>
+          <div class="form-section">
+            <span>Questions</span>
+            <button class="secondary small" type="button" onclick="addQuestion()">Add question</button>
+          </div>
+          ${(packet.questionnaire_results || []).map((result, index) => questionFields(result, index)).join("")}
+          ${!(packet.questionnaire_results || []).length ? '<div class="empty">No questions. Use Add question to create one.</div>' : ""}
+        `;
+      }
+
+      function field(path, label, help, value, type = "text", wide = false, options = null) {
+        const escapedValue = escapeHtml(value ?? "");
+        const control = options
+          ? `<select data-field="${escapeHtml(path)}">${options.map((option) => `<option value="${escapeHtml(option)}"${String(value) === option ? " selected" : ""}>${escapeHtml(option)}</option>`).join("")}</select>`
+          : type === "textarea"
+            ? `<textarea data-field="${escapeHtml(path)}">${escapedValue}</textarea>`
+            : `<input data-field="${escapeHtml(path)}" type="${escapeHtml(type)}" value="${escapedValue}" />`;
+        return `<div class="field-card${wide ? " wide" : ""}">
+          <label>${escapeHtml(label)}</label>
+          <div class="field-help">${escapeHtml(help)}</div>
+          ${control}
+        </div>`;
+      }
+
+      function tierField(attributes, name, label, help) {
+        const attribute = attributes[name] || { value: "", definition: help };
+        return field(`tier_attribute.${name}`, label, `${help} Definition: ${attribute.definition || "not supplied"}`, attribute.value);
+      }
+
+      function questionFields(result, index) {
+        const prefix = `questionnaire_results.${index}`;
+        const control = `${result.control?.framework || ""} ${result.control?.control_id || ""} - ${result.control?.title || ""}`.trim();
+        return `<div class="form-section">
+            <span>${escapeHtml(result.question_id || `Question ${index + 1}`)} linked control: ${escapeHtml(control || "not set")}</span>
+            <button class="secondary small" type="button" onclick="removeQuestion(${index})">Remove</button>
+          </div>
+          <div class="form-grid">
+            ${field(`${prefix}.question_id`, "Question ID", "Identifier used by the assessment and final report.", result.question_id)}
+            ${field(`${prefix}.control.framework`, "Control framework", "Framework linked to the question.", result.control?.framework)}
+            ${field(`${prefix}.control.control_id`, "Control ID", "Exact control reference used by retrieval and citations.", result.control?.control_id)}
+            ${field(`${prefix}.control.title`, "Control title", "Human-readable control name.", result.control?.title)}
+            ${field(`${prefix}.control.control_type`, "Control type", "How this control mainly reduces risk or improves resilience.", result.control?.control_type || "unknown", "text", false, ["preventative", "detective", "corrective", "recovery", "response", "unknown"])}
+            ${field(`${prefix}.question_text`, "Question text", "Question shown to the vendor.", result.question_text, "textarea", true)}
+            ${field(`${prefix}.response`, "Vendor answer", "Vendor's direct answer before analyst interpretation.", result.response)}
+            ${field(`${prefix}.compliance`, "Compliance assessment", "Analyst assessment used to decide whether this is a strength or weakness.", result.compliance, "text", false, ["full", "partial", "no", "not_applicable", "unknown"])}
+            ${field(`${prefix}.maturity`, "Control maturity", "How mature the control appears based on answer, comments, and evidence.", result.maturity, "text", false, ["basic", "developing", "implemented", "managed", "optimized", "unknown"])}
+            ${field(`${prefix}.vendor_comment`, "Vendor comment", "Vendor free text. This is sanitized later before model use.", result.vendor_comment, "textarea", true)}
+            ${field(`${prefix}.analyst_comment`, "Analyst comment", "Analyst interpretation or challenge.", result.analyst_comment, "textarea", true)}
+            ${field(`${prefix}.evidence_descriptions`, "Evidence descriptions", "One evidence description per line. Supported evidence file types are PDF, JPG, and PNG.", (result.evidence || []).map((item) => item.description).join("\n"), "textarea", true)}
+          </div>`;
+      }
+
+      function applyFormToPacket() {
+        document.querySelectorAll("[data-field]").forEach((input) => {
+          setPacketField(packet, input.dataset.field, input.value);
+        });
+      }
+
+      function setPacketField(targetPacket, path, value) {
+        if (path === "vendor.services") {
+          targetPacket.vendor.services = value.split(",").map((item) => item.trim()).filter(Boolean);
+          return;
+        }
+        if (path.startsWith("tier_attribute.")) {
+          const name = path.split(".")[1];
+          const attribute = (targetPacket.tier.attributes || []).find((item) => item.name === name);
+          if (attribute) attribute.value = parseBusinessValue(value);
+          return;
+        }
+        if (path.endsWith(".evidence_descriptions")) {
+          const index = Number(path.split(".")[1]);
+          const result = targetPacket.questionnaire_results[index];
+          result.evidence = value.split("\n").map((line) => line.trim()).filter(Boolean).map((description, itemIndex) => ({
+            evidence_id: result.evidence?.[itemIndex]?.evidence_id || `${result.question_id || `Q${index + 1}`}-E${itemIndex + 1}`,
+            description,
+            file_type: result.evidence?.[itemIndex]?.file_type || "pdf"
+          }));
+          return;
+        }
+        const parts = path.split(".");
+        let target = targetPacket;
+        for (const part of parts.slice(0, -1)) {
+          target = Array.isArray(target) ? target[Number(part)] : target[part];
+        }
+        const key = parts[parts.length - 1];
+        target[key] = key === "level" ? Number(value || 1) : value;
+      }
+
+      function saveQuestionnaire() {
+        applyFormToPacket();
+        const formatted = JSON.stringify(packet, null, 2);
+        window.localStorage.setItem(savedQuestionnaireKey, formatted);
+        window.localStorage.setItem(savedScenarioKey, formatted);
+        if (window.opener) {
+          window.opener.postMessage({ type: "foundation-questionnaire-saved", packet }, window.location.origin);
+        }
+        statusEl.textContent = "Saved. The workflow page will use this questionnaire for the next run.";
+      }
+
+      function loadQuestionnaire() {
+        const saved = window.localStorage.getItem(savedQuestionnaireKey);
+        if (!saved) {
+          statusEl.textContent = "No saved user questionnaire found.";
+          return;
+        }
+        packet = JSON.parse(saved);
+        renderForm();
+        statusEl.textContent = "Loaded saved user questionnaire.";
+      }
+
+      function eraseQuestionnaire() {
+        packet = blankQuestionnairePacket();
+        renderForm();
+        statusEl.textContent = "Erased the editable questionnaire. Press Save if you want the workflow to use the erased version.";
+      }
+
+      function defaultValues() {
+        packet = clonePacket(sample);
+        renderForm();
+        statusEl.textContent = "Restored default values. Press Save if you want the workflow to use the defaults.";
+      }
+
+      function addQuestion() {
+        applyFormToPacket();
+        packet.questionnaire_results = packet.questionnaire_results || [];
+        packet.questionnaire_results.push(newQuestionTemplate(packet.questionnaire_results.length + 1));
+        renderForm();
+        statusEl.textContent = "Added a blank question.";
+      }
+
+      function removeQuestion(index) {
+        applyFormToPacket();
+        packet.questionnaire_results.splice(index, 1);
+        renderForm();
+        statusEl.textContent = "Removed question.";
+      }
+
+      function blankQuestionnairePacket() {
+        return {
+          assessment_id: "",
+          vendor: {
+            vendor_id: "",
+            name: "",
+            vendor_type: "",
+            business_relationship: "",
+            country: "",
+            services: [],
+          },
+          tier: {
+            level: 1,
+            definition: "",
+            attributes: (sample?.tier?.attributes || []).map((attribute) => ({
+              name: attribute.name,
+              value: "",
+              definition: attribute.definition || "",
+            })),
+          },
+          questionnaire_results: [],
+          metadata: { source: "manual_questionnaire_builder" },
+        };
+      }
+
+      function newQuestionTemplate(number) {
+        return {
+          question_id: `Q${number}`,
+          question_text: "",
+          control: {
+            framework: "",
+            control_id: "",
+            title: "",
+            control_type: "unknown",
+          },
+          response: "",
+          vendor_comment: "",
+          analyst_comment: "",
+          compliance: "unknown",
+          maturity: "unknown",
+          evidence: [],
+        };
+      }
+
+      function parseBusinessValue(value) {
+        if (value === "true") return true;
+        if (value === "false") return false;
+        if (value !== "" && !Number.isNaN(Number(value))) return Number(value);
+        return value;
+      }
+
+      function clonePacket(value) {
+        return JSON.parse(JSON.stringify(value || {}));
+      }
+
+      function escapeHtml(value) {
+        return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+      }
+
+      document.querySelector("#save").addEventListener("click", saveQuestionnaire);
+      document.querySelector("#load").addEventListener("click", loadQuestionnaire);
+      document.querySelector("#erase").addEventListener("click", eraseQuestionnaire);
+      document.querySelector("#defaults").addEventListener("click", defaultValues);
+      document.querySelector("#addQuestion").addEventListener("click", addQuestion);
+      document.querySelector("#back").addEventListener("click", () => {
+        window.location.href = "/mock/foundation";
+      });
+      document.querySelector("#close").addEventListener("click", () => window.close());
+      window.addQuestion = addQuestion;
+      window.removeQuestion = removeQuestion;
+
+      loadDefaultOnStart().catch((error) => {
+        statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+      });
+    </script>
+  </body>
+</html>

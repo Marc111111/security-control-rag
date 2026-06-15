@@ -1,0 +1,31 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.uvicorn.*.log
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Local corpora and generated stores can contain confidential documents.
+data/raw/
+data/processed/
+data/workflow_runs/
+data/last_workflow_run.json
+standards/*
+!standards/
+!standards/SOURCES.md
+storage/
+.ollama/
+third_party/*
+!third_party/
+!third_party/README.md
+
+# Local environment.
+.env
+.env.*
+!.env.example
