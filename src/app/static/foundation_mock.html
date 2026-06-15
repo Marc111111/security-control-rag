@@ -102,16 +102,20 @@
         gap: 10px;
       }
       .config-panel .panel-header { padding: 9px 12px; }
-      .config-panel .panel-body { padding: 10px 12px 8px; overflow: hidden; }
-      .config-panel .config { gap: 7px 10px; align-items: end; }
+      .config-panel .panel-body { padding: 8px 12px 7px; overflow: visible; }
+      .config-panel .config {
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(96px, .45fr);
+        gap: 5px 8px;
+        align-items: end;
+      }
       .config-panel label { font-size: 11px; margin-bottom: 3px; }
       .config-panel select,
-      .config-panel input { height: 32px; padding: 0 8px; }
+      .config-panel input { height: 30px; padding: 0 8px; }
       .config-panel .check {
-        min-height: 28px;
+        min-height: 22px;
         margin-top: 0;
         gap: 7px;
-        font-size: 12px;
+        font-size: 11px;
         align-self: end;
       }
       .config-panel .check input { width: 14px; height: 14px; }
@@ -175,31 +179,52 @@
         gap: 8px;
       }
       .estimate-panel {
-        margin-top: 9px;
-        padding-top: 8px;
+        margin-top: 6px;
+        padding-top: 6px;
         border-top: 1px solid var(--line);
       }
       .estimate-header {
         display: flex;
         align-items: center;
         justify-content: space-between;
-        gap: 10px;
-        margin-bottom: 7px;
+        gap: 8px;
+        margin-bottom: 5px;
       }
       .estimate-grid {
         display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 6px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+        overflow: visible;
       }
       .estimate-note {
-        margin-top: 6px;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 9px;
+        line-height: 1.2;
+      }
+      .estimate-chip {
+        min-width: 0;
+        border: 1px solid #d4e4e0;
+        background: var(--soft);
+        border-radius: 6px;
+        padding: 5px 7px;
+        line-height: 1.15;
+      }
+      .estimate-chip span {
+        display: block;
         color: var(--muted);
         font-size: 10px;
-        line-height: 1.25;
+        font-weight: 800;
+        margin-bottom: 1px;
+        white-space: nowrap;
       }
-      .estimate-grid .metric { padding: 6px 7px; }
-      .estimate-grid .metric span { font-size: 10px; margin-bottom: 2px; }
-      .estimate-grid .metric strong { font-size: 12px; }
+      .estimate-chip strong {
+        display: block;
+        color: #061f2b;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .estimate-chip.wide { grid-column: 1 / -1; }
       details.db-editor {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -400,6 +425,7 @@
       @media (max-width: 1050px) {
         main { grid-template-columns: 1fr; height: auto; }
         .config, .metrics, .triptych, .form-grid { grid-template-columns: 1fr; }
+        .config-panel .config { grid-template-columns: repeat(2, minmax(0, 1fr)); }
         .field-card.wide { grid-column: auto; }
       }
     </style>
@@ -427,16 +453,16 @@
                 <select id="model"></select>
               </div>
               <div>
-                <label for="apiKey">OpenAI API key for this request only</label>
+                <label for="apiKey">OpenAI API key (run only)</label>
                 <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
               </div>
               <div>
-                <label for="tokenTolerance">Token guard tolerance (+/- %)</label>
+                <label for="tokenTolerance">Token guard +/- %</label>
                 <input id="tokenTolerance" type="number" min="0" max="100" step="1" value="10" />
               </div>
               <label class="check">
                 <input type="checkbox" id="confirmExternal" />
-                Allow external OpenAI call
+                Allow OpenAI call
               </label>
               <label class="check">
                 <input type="checkbox" id="enforceTokenBudget" checked />
@@ -449,11 +475,10 @@
                 <button class="secondary small" id="estimateCost">Estimate cost</button>
               </div>
               <div class="estimate-grid" id="costEstimate">
-                <div class="metric"><span>Status</span><strong>No estimate yet</strong></div>
+                <div class="estimate-chip wide"><span>Estimate</span><strong>No estimate yet</strong></div>
               </div>
               <div class="estimate-note">
-                Estimates use the selected provider/model and current input. No API key is needed
-                because this does not call OpenAI or Ollama.
+                Estimate only: no API key or model call. Actual OpenAI runs still require confirmation.
               </div>
             </div>
           </div>
@@ -1102,20 +1127,25 @@
         return `<div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`;
       }
 
+      function estimateChip(label, value, extraClass = "") {
+        return `<div class="estimate-chip ${extraClass}"><span>${escapeHtml(label)}</span><strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong></div>`;
+      }
+
       function renderCostEstimate(data) {
         if (!data) {
-          costEstimateEl.innerHTML = metric("Status", "No estimate yet");
+          costEstimateEl.innerHTML = estimateChip("Estimate", "No estimate yet", "wide");
           return;
         }
         costEstimateEl.innerHTML = [
-          metric("Provider / model", `${data.provider}:${data.model}`),
-          metric("Status", data.will_exceed_guard ? "Blocked" : "OK"),
-          metric("Input tokens", data.estimated_input_tokens),
-          metric("Output tokens", data.estimated_output_tokens),
-          metric("Total tokens", data.estimated_total_tokens),
-          metric("Token cap", data.allowed_total_tokens),
-          metric("LLM calls", data.llm_call_count),
-          metric("Cost", costLabel(data)),
+          estimateChip("Model", data.model),
+          estimateChip("USD", costLabel(data)),
+          estimateChip(
+            "Tokens",
+            `${formatNumber(data.estimated_input_tokens)} in / ${formatNumber(data.estimated_output_tokens)} out / ${formatNumber(data.estimated_total_tokens)} total`,
+            "wide",
+          ),
+          estimateChip("Guard cap", formatNumber(data.allowed_total_tokens)),
+          estimateChip("Calls", data.llm_call_count),
         ].join("");
       }
 
@@ -1131,9 +1161,12 @@
       function costLabel(data) {
         if (!data) return "$0";
         const usd = Number(data.estimated_cost_usd || 0);
-        const eur = Number(data.estimated_cost_eur || 0);
-        if (!usd && !eur) return "$0 / EUR 0";
-        return `$${usd.toFixed(6)} / EUR ${eur.toFixed(6)}`;
+        if (!usd) return "$0";
+        return `$${usd.toFixed(6)}`;
+      }
+
+      function formatNumber(value) {
+        return Number(value || 0).toLocaleString("en-US");
       }
 
       function etaLabel(job) {
@@ -1215,7 +1248,7 @@
 
       function clearCostEstimate() {
         lastPreflight = null;
-        costEstimateEl.innerHTML = metric("Status", "No estimate yet");
+        costEstimateEl.innerHTML = estimateChip("Estimate", "No estimate yet", "wide");
       }
 
       async function refreshRuns() {

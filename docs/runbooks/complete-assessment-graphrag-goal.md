@@ -60,8 +60,9 @@ tests, and a workflow UI/API.
   workflow run across all LLM calls and is deliberately conservative. Default behavior is to enforce
   the estimate plus `token_budget_tolerance_percent` (10% by default), compare it with actual
   provider usage where available, and return per-call token usage in `token_budget.calls`.
-- Local Ollama models show token counts with zero API price. External OpenAI preflight/run output
-  shows estimated USD and EUR cost using the configured model price table and USD-to-EUR rate.
+- Local Ollama models show token counts with zero API price. External OpenAI preflight/run data may
+  include USD and EUR metadata using the configured model price table and USD-to-EUR rate, but the
+  Configuration panel shows USD only to keep the estimate compact.
 - UI workflow steps must remain a readable handoff chain: previous output becomes next input.
   Multi-answer loops need explicit selection and storage steps so the chain does not appear to jump.
 - Each Input, Process, and Output preview has an Expand button that opens a separate inspection
@@ -74,7 +75,7 @@ tests, and a workflow UI/API.
   preflights the current edited input and selected model without starting a run, calling a model, or
   requiring an API key. Dirty optional-form edits are synced into the request before the estimate is
   generated. The estimate display must include input tokens, output tokens, total tokens, token cap,
-  and USD/EUR cost where applicable.
+  LLM calls, and USD cost where applicable.
 - Workflow step tabs should be created closed by default during polling. Preserve user open/closed
   state across polling updates. Do not auto-open the current or newest step.
 - Running jobs show ETA from the median duration of previous completed saved runs, preferring the
@@ -175,7 +176,13 @@ http://127.0.0.1:8000/mock/foundation
     `Background workflow job`.
   - Run -> Cancel moved the job to `cancelled` and re-enabled Run.
   - `ollama ps` after cancellation showed no `qwen3:14b` resident; GPU utilization was 0%.
-- Commit/push/PR update: pending in this goal run.
+  - The Configuration panel must show the whole estimate block inside the top-left frame without
+    clipping. On 2026-06-15 the live page was verified after pressing `Estimate cost`: estimate
+    bottom `458px`, optional DB form top `477px`, panel scroll height equaled client height.
+    Keep estimate content visible but readable. Use labels `Model`, `USD`, `Tokens`, `Guard cap`,
+    and `Calls`; the `Tokens` value should include input, output, and total tokens in one sentence.
+    Do not show a redundant `Status OK` estimate chip or tiny unreadable boxes.
+- Commit/push/PR update: record compact Configuration panel changes in git and PR comments.
 
 ## Known Risks And Improvements
 

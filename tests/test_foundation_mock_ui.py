@@ -13,12 +13,14 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "/api/workflows/complete-assessment/run" in response.text
     assert "gpt-5.4-mini" in response.text
     assert "qwen3:14b" in response.text
-    assert "OpenAI API key for this request only" in response.text
+    assert "OpenAI API key (run only)" in response.text
     assert "Estimate cost" in response.text
-    assert "Token guard tolerance (+/- %)" in response.text
+    assert "Token guard +/- %" in response.text
     assert "Enforce token guard" in response.text
     assert "Est. one-run price" in response.text
-    assert "Output tokens" in response.text
+    assert 'estimateChip("USD"' in response.text
+    assert '"Tokens"' in response.text
+    assert "Guard cap" in response.text
     assert "ETA" in response.text
     assert "No run history yet" in response.text
     assert "historicalDurationEstimate" in response.text

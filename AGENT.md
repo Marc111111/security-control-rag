@@ -253,8 +253,8 @@ high estimate and a positive surprise after the run over an underestimate that b
 risks external-model spend. The workflow must compare final actual usage against preflight and
 include per-call token usage in `token_budget.calls`. Use provider-reported token counts when
 available and the local rough estimate only as a fallback. Internal Ollama models should show token
-counts with zero API cost. External OpenAI estimates should show USD and EUR using the configured
-pricing table and USD-to-EUR rate.
+counts with zero API cost. External OpenAI estimate data may include USD and EUR metadata using the
+configured pricing table and USD-to-EUR rate, but the browser Configuration panel shows USD only.
 
 During development, the Final Result Contract panel includes an Expand button and an "Open Codex
 review packet" button. The app cannot directly call the Codex desktop agent; the review button
@@ -270,3 +270,9 @@ model without model calls or API keys, and it must show input tokens, output tok
 token cap, and cost. Actual OpenAI runs still require explicit confirmation/API credentials. Running
 jobs show ETA based on median duration from previous completed saved runs. If no saved duration
 history exists, show that honestly.
+
+Keep the Configuration panel dense enough that all controls and the full run estimate are visible in
+the top-left frame without hidden clipping, but do not make the estimate unreadably tiny. Use
+readable estimate fields: `Model`, `USD`, `Tokens`, `Guard cap`, and `Calls`. The `Tokens` value
+should show input, output, and total tokens in one understandable sentence. Do not show a redundant
+`Status OK` chip.
