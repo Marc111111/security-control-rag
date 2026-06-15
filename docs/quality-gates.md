@@ -17,6 +17,15 @@ Implementation status as of 2026-06-15:
   and bounded repair retries;
 - complete-assessment final-paragraph LLM calls use a deterministic validated fact packet,
   prompt validation, strict parsing, output gates, and bounded repair retries;
+- final-paragraph prompts are built from a compact report fact packet, not the full internal
+  validated object, and must include an explicit 120-word maximum per paragraph;
+- final reports must name concrete standards/control references added by RAG when available, and
+  must not hide them behind generic counts such as `7 controls`;
+- final reports must avoid urgency or severity terms such as `critical`, `immediate`,
+  `unacceptable`, or `severe` unless those terms are present in the validated fact packet;
+- when final-paragraph model retries fail, the workflow may continue only through a visible
+  rejection step followed by a deterministic report renderer that uses the same validated facts and
+  must pass the same final paragraph gate;
 - failed workflow/job gates are shown in the browser through a modal with operator and system-owner
   remediation guidance;
 - OpenAI and Ollama generation temperature defaults are set to `0` to reduce variation between
@@ -26,6 +35,9 @@ Implementation status as of 2026-06-15:
 ## Non-Negotiable Rules
 
 - No silent fallback may be presented as a successful result.
+- A deterministic fallback renderer is allowed only after the failed model drafts are visibly
+  rejected and persisted in the workflow trace, and only if the renderer output passes the same
+  final report gate.
 - LLMs may help draft or structure text, but they must not decide hard facts unsupported by trusted
   input, RAG evidence, GraphRAG relationships, or deterministic Python extraction.
 - Every LLM call needs a dedicated professional prompt-builder step.
@@ -229,9 +241,14 @@ Checks:
 - prompt is written for a business-facing TPRM report writer
 - prompt explains that facts have already been validated
 - prompt forbids JSON repair, re-analysis, new controls, new risks, new citations, and new evidence
-- prompt includes only the validated fact packet plus minimal vendor/tier context
+- prompt includes only the compact validated report fact packet plus minimal vendor/tier context
 - output contract requires exactly: management summary, introduction, objective, risk exposure,
   and conclusion
+- style contract requires 2-4 sentences and at most 120 words per paragraph
+- prompt requires risk exposure or conclusion to name the most important standards/control
+  references from the risk chains or toolchain delta
+- prompt requires evidence-calibrated wording: distinguish a missing control from missing evidence,
+  and avoid urgency/severity claims unless the fact packet supports them
 
 Failure behavior: stop before the model call.
 
@@ -247,7 +264,7 @@ Schema checks:
 
 Content checks:
 
-- paragraphs stay within the configured length limit
+- paragraphs stay within the configured 120-word length limit
 - mentions the actual vendor
 - mentions the tier level where relevant
 - mentions the real weaknesses
@@ -261,9 +278,14 @@ Consistency checks:
 - no new risks outside the validated fact packet
 - no new controls outside the validated fact packet
 - no unsupported assurance statement such as `acceptable risk` unless validated facts support it
+- no unsupported urgency or severity wording
+- risk exposure or conclusion names at least one standards/control reference added by RAG when
+  such references exist
 
-Failure behavior: retry with validation errors. If still invalid, mark the final paragraph step
-failed and do not produce a successful final result.
+Failure behavior: retry with validation errors. If still invalid, visibly reject the model drafts.
+The workflow may then render paragraphs deterministically from the validated fact packet. The
+deterministic output must pass this same gate; otherwise the workflow fails and no successful final
+result is produced.
 
 ## Output Budgeting And Style
 
@@ -285,7 +307,10 @@ Risk-analysis calls should be surgical:
 Final report calls may use prose, but only controlled prose:
 
 - 2-4 sentences per paragraph
+- maximum 120 words per paragraph
 - most important finding first
+- name concrete added controls where available
+- use evidence-calibrated language
 - no filler
 - no methodology narration
 
@@ -352,6 +377,12 @@ Default retry policy:
 Retries must not add new evidence or broaden the model's freedom. They may only ask the model to
 correct the response according to the same source material and validation errors.
 
+If final report repair attempts still fail, the model output must be rejected in a visible workflow
+step. A deterministic renderer may then phrase the final sections from the already validated risk
+model. This is not a generic fallback: it must use the vendor, tier, confirmed gaps, standards
+requirements, risk chains, toolchain delta, residual concern, and missing information already
+present in the validated fact packet, and it must pass the final paragraph output gate.
+
 ## Runtime Quality Gate Result Shape
 
 Quality gates should return structured results similar to:
@@ -382,6 +413,7 @@ paragraphs.
 That exact failure mode must be prevented by:
 
 - clean validated fact packet before final report drafting
+- compact report fact packet before final report prompting
 - stronger final paragraph prompt
 - strict paragraph output gate
 - no silent parser fallback

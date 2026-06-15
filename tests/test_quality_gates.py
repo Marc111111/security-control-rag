@@ -3,6 +3,7 @@ from app.quality_gates import (
     validate_final_paragraphs,
     validate_prompt_quality,
     validate_risk_answer,
+    validate_risk_assessment_chains,
     validate_workflow_step_contract,
     validate_workflow_step_payload,
 )
@@ -216,6 +217,132 @@ def test_final_paragraph_gate_blocks_unsupported_acceptable_risk_claim() -> None
 
     assert gate.passed is False
     assert any("acceptance threshold" in issue.message for issue in gate.issues)
+
+
+def test_final_paragraph_gate_requires_toolchain_added_value() -> None:
+    gate = validate_final_paragraphs(
+        paragraphs={
+            "management_summary": "Acme SaaS is a Tier 2 vendor with endpoint gaps.",
+            "introduction": "Acme SaaS is reviewed for vendor risk.",
+            "objective": "The objective is to review questionnaire gaps.",
+            "risk_exposure": "The vendor has no anti-malware.",
+            "conclusion": "The vendor should fix the gap.",
+        },
+        raw_model_output="{}",
+        vendor_name="Acme SaaS",
+        tier_level=2,
+        weakness_summaries=["anti-malware gap"],
+        validated_facts={
+            "validated_risk_facts": [{"risks": ["anti-malware gap"]}],
+            "toolchain_delta": {
+                "added_by_rag": ["CIS Safeguard 10.1 - anti-malware"],
+                "added_by_resilience_analysis": [],
+            },
+        },
+    )
+
+    assert gate.passed is False
+    assert any("standards/RAG value" in issue.message for issue in gate.issues)
+
+
+def test_final_paragraph_gate_blocks_over_word_cap() -> None:
+    long_paragraph = (
+        "Acme SaaS is a Tier 2 vendor where CIS endpoint controls and recovery evidence "
+        + " ".join(f"remain relevant item {index}" for index in range(30))
+    )
+
+    gate = validate_final_paragraphs(
+        paragraphs={
+            "management_summary": long_paragraph,
+            "introduction": "Acme SaaS is reviewed as a Tier 2 vendor.",
+            "objective": "The objective is to review CIS controls and recovery risk.",
+            "risk_exposure": "CIS endpoint controls and recovery risk drive exposure.",
+            "conclusion": "CIS controls and recovery evidence remain required.",
+        },
+        raw_model_output="{}",
+        vendor_name="Acme SaaS",
+        tier_level=2,
+        weakness_summaries=["anti-malware gap"],
+        validated_facts={
+            "validated_risk_facts": [{"risks": ["anti-malware gap"]}],
+            "toolchain_delta": {
+                "added_by_rag": ["CIS Safeguard 10.1 - anti-malware"],
+                "added_by_resilience_analysis": ["recovery evidence"],
+            },
+        },
+    )
+
+    assert gate.passed is False
+    assert any("maximum 120 words" in issue.message for issue in gate.issues)
+
+
+def test_final_paragraph_gate_requires_named_added_control_in_risk_or_conclusion() -> None:
+    gate = validate_final_paragraphs(
+        paragraphs={
+            "management_summary": "Acme SaaS is a Tier 2 vendor with endpoint gaps.",
+            "introduction": "Acme SaaS is reviewed for vendor risk.",
+            "objective": "The objective is to review endpoint and recovery risk.",
+            "risk_exposure": "The toolchain mapped the issue to 7 standards-backed controls.",
+            "conclusion": "Controls should be implemented and evidence should be reviewed.",
+        },
+        raw_model_output="{}",
+        vendor_name="Acme SaaS",
+        tier_level=2,
+        weakness_summaries=["anti-malware gap"],
+        validated_facts={
+            "validated_risk_facts": [{"risks": ["malware infection"]}],
+            "toolchain_delta": {
+                "added_by_rag": ["CIS Safeguard 10.1 - anti-malware"],
+                "added_by_resilience_analysis": ["recovery evidence"],
+            },
+        },
+    )
+
+    assert gate.passed is False
+    assert any("standards/control reference" in issue.message for issue in gate.issues)
+
+
+def test_final_paragraph_gate_blocks_unsupported_urgency_language() -> None:
+    gate = validate_final_paragraphs(
+        paragraphs={
+            "management_summary": "Acme SaaS is a Tier 2 vendor with endpoint gaps.",
+            "introduction": "Acme SaaS is reviewed for vendor risk.",
+            "objective": "The objective is to review CIS controls and recovery risk.",
+            "risk_exposure": "CIS endpoint gaps create malware exposure.",
+            "conclusion": "Acme SaaS requires immediate action on CIS controls.",
+        },
+        raw_model_output="{}",
+        vendor_name="Acme SaaS",
+        tier_level=2,
+        weakness_summaries=["anti-malware gap"],
+        validated_facts={
+            "validated_risk_facts": [{"risks": ["malware infection"]}],
+            "toolchain_delta": {
+                "added_by_rag": ["CIS Safeguard 10.1 - anti-malware"],
+                "added_by_resilience_analysis": ["recovery evidence"],
+            },
+        },
+    )
+
+    assert gate.passed is False
+    assert any("urgency or severity" in issue.message for issue in gate.issues)
+
+
+def test_risk_assessment_chain_gate_requires_delta_and_business_fields() -> None:
+    gate = validate_risk_assessment_chains(
+        {
+            "risk_assessment_chains": [
+                {
+                    "known_from_assessment": ["No anti-malware"],
+                    "standards_requirements_added": [],
+                }
+            ],
+            "toolchain_delta": {"added_by_rag": []},
+        }
+    )
+
+    assert gate.passed is False
+    assert any("toolchain_delta" in issue.field for issue in gate.issues)
 
 
 def test_workflow_payload_gate_blocks_debug_leakage() -> None:

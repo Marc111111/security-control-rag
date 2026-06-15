@@ -108,6 +108,10 @@ def _chain_issue(
         packet = _dict(input_payload).get("validated_fact_packet_from_previous_step")
         if packet == previous_output:
             return None
+    if name == "Reject unsafe model-drafted report paragraphs":
+        packet = _dict(input_payload).get("validated_fact_packet_from_previous_step")
+        if packet == previous_output:
+            return None
     if name == "Prepare final result for the application":
         paragraphs = _dict(previous_output).get("parsed_paragraphs")
         if paragraphs and _dict(input_payload).get("paragraphs_from_previous_step") == paragraphs:
@@ -185,6 +189,31 @@ def _semantic_issues(
                     severity="blocking",
                     message="Accepted risk answer has no recommended controls.",
                     fix="Tighten retrieval, deterministic control extraction, or output gates.",
+                )
+            )
+    if name == "Render report paragraphs deterministically":
+        paragraphs = _dict(output_payload).get("parsed_paragraphs")
+        if not paragraphs:
+            issues.append(
+                WorkflowAuditIssue(
+                    step_index=index,
+                    step_name=name,
+                    severity="blocking",
+                    message="Deterministic report renderer did not produce report paragraphs.",
+                    fix=(
+                        "Fix the renderer so it always produces the five report sections from "
+                        "the validated fact packet, or fail before final packaging."
+                    ),
+                )
+            )
+        if _dict(output_payload.get("quality_gate")).get("passed") is not True:
+            issues.append(
+                WorkflowAuditIssue(
+                    step_index=index,
+                    step_name=name,
+                    severity="blocking",
+                    message="Deterministic report paragraphs did not pass the final quality gate.",
+                    fix="Fix the deterministic renderer or the risk-chain data before packaging.",
                 )
             )
     return issues

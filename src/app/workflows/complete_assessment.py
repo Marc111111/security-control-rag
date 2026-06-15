@@ -27,10 +27,13 @@ from app.quality_gates import (
     repair_prompt,
     validate_final_paragraphs,
     validate_prompt_contract,
+    validate_prompt_quality,
+    validate_risk_assessment_chains,
     validate_workflow_step_contract,
     validate_workflow_step_payload,
 )
 from app.schemas import GraphRagAnswer
+from app.workflows.risk_chain import build_risk_assessment_chains
 from app.workflows.run_store import WorkflowRunStore
 from secure_rag.llm import OllamaChatClient
 
@@ -492,10 +495,42 @@ class CompleteAssessmentWorkflow:
             )
 
             _raise_if_cancelled(cancel_event)
+            risk_assessment_output = build_risk_assessment_chains(
+                packet=sanitized,
+                weaknesses=findings["weaknesses"],
+                risk_evidence=compact_risk_evidence,
+            )
+            risk_chain_gate = validate_risk_assessment_chains(risk_assessment_output)
+            add_step(
+                WorkflowStep(
+                    name="Build risk assessment chains and added-value delta",
+                    explanation=(
+                        "Shows what the toolchain added beyond the questionnaire gaps."
+                    ),
+                    tool="Python deterministic risk model",
+                    input=rag_evidence_output,
+                    process=(
+                        "We compare each weak answer with the standards-backed RAG output. "
+                        "This builds the missing risk chain: known assessment facts, added "
+                        "requirements, threats, vulnerabilities, inherent risk, control "
+                        "function, resilience effect, residual concern, and remaining evidence "
+                        "questions."
+                    ),
+                    output={
+                        **risk_assessment_output,
+                        "quality_gate": risk_chain_gate.as_dict(),
+                    },
+                )
+            )
+            if not risk_chain_gate.passed:
+                raise QualityGateFailure(risk_chain_gate)
+
+            _raise_if_cancelled(cancel_event)
             validated_fact_packet = _validated_fact_packet(
                 sanitized,
                 findings,
                 compact_risk_evidence,
+                risk_assessment_output,
             )
             add_step(
                 WorkflowStep(
@@ -504,7 +539,10 @@ class CompleteAssessmentWorkflow:
                         "Creates the clean facts that the final report writer is allowed to use."
                     ),
                     tool="Python deterministic workflow + quality gate",
-                    input=rag_evidence_output,
+                    input={
+                        **risk_assessment_output,
+                        "quality_gate": risk_chain_gate.as_dict(),
+                    },
                     process=(
                         "We remove raw debug material and keep only vendor context, tier context, "
                         "weaknesses, validated risk facts, controls, source mappings, and missing "
@@ -517,8 +555,9 @@ class CompleteAssessmentWorkflow:
 
             _raise_if_cancelled(cancel_event)
             cost_estimate = _cost_estimate_from_preflight(request.model, preflight)
+            report_fact_packet = _report_fact_packet(validated_fact_packet)
             paragraph_messages = _paragraph_prompt(
-                validated_fact_packet,
+                report_fact_packet,
             )
             paragraph_prompt_gate = validate_prompt_contract(
                 gate="final_paragraph_prompt",
@@ -530,27 +569,44 @@ class CompleteAssessmentWorkflow:
                     "Forbidden behavior:",
                     "Output contract:",
                     "Do not repair JSON",
+                    "120 words",
+                    "Name the most important standards or control references",
+                    "Distinguish control absence from missing evidence",
                 ],
                 task_name="final paragraph",
             )
-            if not paragraph_prompt_gate.passed:
+            paragraph_prompt_quality_gate = validate_prompt_quality(
+                gate="final_paragraph_prompt_quality",
+                messages=paragraph_messages,
+                task_name="final paragraph",
+                max_total_chars=12_000,
+                max_user_chars=9_500,
+                max_source_markers=0,
+            )
+            if not paragraph_prompt_gate.passed or not paragraph_prompt_quality_gate.passed:
+                failed_prompt_gate = (
+                    paragraph_prompt_gate
+                    if not paragraph_prompt_gate.passed
+                    else paragraph_prompt_quality_gate
+                )
                 add_step(
                     WorkflowStep(
                         name="Quality gate failed for final paragraph prompt",
                         explanation=(
                             "Stops before calling the report model because the prompt is "
-                            "incomplete."
+                            "incomplete or too large."
                         ),
                         tool="Python quality gate",
                         input={"model_prompt": _compact_messages(paragraph_messages)},
                         process=(
                             "We check that the prompt explains the model role, task, trusted "
-                            "fact boundary, forbidden behavior, and output contract."
+                            "fact boundary, forbidden behavior, output contract, and size "
+                            "limits before any final report model call."
                         ),
-                        output=paragraph_prompt_gate.as_dict(),
+                        output=failed_prompt_gate.as_dict(),
                     )
                 )
-                raise QualityGateFailure(paragraph_prompt_gate)
+                raise QualityGateFailure(failed_prompt_gate)
             paragraph_input_tokens = _rough_tokens(
                 json.dumps(paragraph_messages, ensure_ascii=True)
             )
@@ -565,8 +621,10 @@ class CompleteAssessmentWorkflow:
             )
             paragraph_input = {
                 "validated_fact_packet_from_previous_step": validated_fact_packet,
+                "report_fact_packet_sent_to_model": report_fact_packet,
                 "model_prompt": _compact_messages(paragraph_messages),
                 "quality_gate": paragraph_prompt_gate.as_dict(),
+                "prompt_quality_gate": paragraph_prompt_quality_gate.as_dict(),
                 "api_key": "[hidden]",
             }
             _raise_if_cancelled(cancel_event)
@@ -644,57 +702,116 @@ class CompleteAssessmentWorkflow:
                     )
             _raise_if_cancelled(cancel_event)
             if paragraph_gate is None or not paragraph_gate.passed or paragraphs is None:
+                rejection_output = {
+                    "validated_fact_packet": validated_fact_packet,
+                    "failed_model_attempts": _compact_paragraph_attempts(
+                        paragraph_attempts
+                    ),
+                    "quality_gate": paragraph_gate.as_dict()
+                    if paragraph_gate
+                    else None,
+                    "fallback_decision": (
+                        "The selected model did not produce acceptable report paragraphs. "
+                        "The workflow rejects those drafts and renders the report sections "
+                        "deterministically from the validated risk facts."
+                    ),
+                    "human_explanation": human_failure_message(paragraph_gate)
+                    if paragraph_gate
+                    else "The quality gate did not produce a result.",
+                }
                 add_step(
                     WorkflowStep(
-                        name="Quality gate failed for final report paragraphs",
+                        name="Reject unsafe model-drafted report paragraphs",
                         explanation=(
-                            "Stops because the report model did not produce trustworthy "
-                            "business paragraphs after repair retries."
+                            "Rejects report text when the model ignores the facts or invents "
+                            "unrelated issues."
                         ),
                         tool="Python quality gate",
                         input=paragraph_input,
                         process=(
                             "We validate the final report text for required fields, vendor/tier "
                             "context, validated risk facts, and forbidden JSON-repair behavior. "
-                            "The workflow stops instead of showing generic fallback text."
+                            "Rejected drafts are not used. The next step renders safe report "
+                            "paragraphs from the validated risk model."
+                        ),
+                        output=rejection_output,
+                    )
+                )
+                paragraphs = _deterministic_paragraphs(validated_fact_packet)
+                paragraph_gate = validate_final_paragraphs(
+                    paragraphs=paragraphs,
+                    raw_model_output=json.dumps(paragraphs, ensure_ascii=True),
+                    vendor_name=sanitized.vendor.name,
+                    tier_level=sanitized.tier.level,
+                    weakness_summaries=[
+                        finding.summary for finding in findings["weaknesses"]
+                    ],
+                    validated_facts=validated_fact_packet,
+                )
+                if not paragraph_gate.passed:
+                    add_step(
+                        WorkflowStep(
+                            name="Quality gate failed for deterministic report paragraphs",
+                            explanation=(
+                                "Stops because even the deterministic report renderer could not "
+                                "produce a report that matches the validated facts."
+                            ),
+                            tool="Python deterministic renderer + quality gate",
+                            input=rejection_output,
+                            process=(
+                                "The deterministic renderer uses only the validated fact packet. "
+                                "If this fails, the issue is in the risk-chain data or the report "
+                                "contract, not in model wording."
+                            ),
+                            output=paragraph_gate.as_dict(),
+                        )
+                    )
+                    raise QualityGateFailure(paragraph_gate)
+                add_step(
+                    WorkflowStep(
+                        name="Render report paragraphs deterministically",
+                        explanation=(
+                            "Creates safe business report text from the validated risk facts "
+                            "without asking the model to invent wording."
+                        ),
+                        tool="Python deterministic report renderer",
+                        input=rejection_output,
+                        process=(
+                            "This renderer uses the vendor, tier, confirmed gaps, standards "
+                            "requirements, risk chains, and added-value delta. It writes concise "
+                            "paragraphs and then passes them through the same final report gate."
                         ),
                         output={
-                            "attempts": paragraph_attempts,
-                            "quality_gate": paragraph_gate.as_dict()
-                            if paragraph_gate
-                            else None,
-                            "human_explanation": human_failure_message(paragraph_gate)
-                            if paragraph_gate
-                            else "The quality gate did not produce a result.",
+                            "parsed_paragraphs": paragraphs,
+                            "quality_gate": paragraph_gate.as_dict(),
+                            "source": "deterministic_renderer_after_rejected_model_output",
                         },
                     )
                 )
-                raise QualityGateFailure(paragraph_gate) if paragraph_gate else RuntimeError(
-                    "Final paragraph quality gate failed without a gate result."
+            else:
+                add_step(
+                    WorkflowStep(
+                        name="Ask model to draft report paragraphs",
+                        explanation=(
+                            "Asks the selected model to turn the assessment data and retrieved "
+                            "evidence into readable report text."
+                        ),
+                        tool=f"{request.model.provider}:{request.model.model}",
+                        input=paragraph_input,
+                        process=(
+                            "We send the evidence package from the previous step plus the cleaned "
+                            "assessment data. The model is instructed to write only the requested "
+                            "paragraphs and not decide scores, schema, or database fields."
+                        ),
+                        output={
+                            "raw_model_output_preview": _preview_text(raw_paragraphs, 1_500),
+                            "parsed_paragraphs": paragraphs,
+                            "attempts": paragraph_attempts,
+                            "quality_gate": paragraph_gate.as_dict(),
+                            "token_usage": paragraph_token_usage,
+                        },
+                    )
                 )
-            add_step(
-                WorkflowStep(
-                    name="Ask model to draft report paragraphs",
-                    explanation=(
-                        "Asks the selected model to turn the assessment data and retrieved "
-                        "evidence into readable report text."
-                    ),
-                    tool=f"{request.model.provider}:{request.model.model}",
-                    input=paragraph_input,
-                    process=(
-                        "We send the evidence package from the previous step plus the cleaned "
-                        "assessment data. The model is instructed to write only the requested "
-                        "paragraphs and not decide scores, schema, or database fields."
-                    ),
-                    output={
-                        "raw_model_output_preview": _preview_text(raw_paragraphs, 1_500),
-                        "parsed_paragraphs": paragraphs,
-                        "attempts": paragraph_attempts,
-                        "quality_gate": paragraph_gate.as_dict(),
-                        "token_usage": paragraph_token_usage,
-                    },
-                )
-            )
 
             _raise_if_cancelled(cancel_event)
             final_result = _final_result(
@@ -702,6 +819,7 @@ class CompleteAssessmentWorkflow:
                 paragraphs,
                 findings,
                 compact_risk_evidence,
+                risk_assessment_output,
             )
             add_step(
                 WorkflowStep(
@@ -715,11 +833,16 @@ class CompleteAssessmentWorkflow:
                         "paragraphs_from_previous_step": paragraphs,
                         "classified_findings": _findings_dump(findings),
                         "risk_evidence_package": compact_risk_evidence,
+                        "risk_assessment_chains": risk_assessment_output.get(
+                            "risk_assessment_chains"
+                        ),
+                        "toolchain_delta": risk_assessment_output.get("toolchain_delta"),
                     },
                     process=(
                         "This step is plain Python. It takes the model-written paragraphs from "
-                        "the previous step and places them into the fixed output contract. The "
-                        "AI model does not decide the database shape."
+                        "the previous step, keeps the risk-chain analysis and added-value "
+                        "delta, and places everything into the fixed output contract. The AI "
+                        "model does not decide the database shape."
                     ),
                     output=final_result,
                 )
@@ -952,13 +1075,24 @@ def _paragraph_prompt(
                 "- Do not invent facts outside the validated fact packet.\n\n"
                 "- Do not mention acceptable risk, thresholds, approval, or rejection unless "
                 "the validated fact packet explicitly contains that decision basis.\n\n"
+                "- Do not use urgency or severity words such as critical, immediate, "
+                "unacceptable, or severe unless those words appear in the validated fact "
+                "packet.\n\n"
+                "- Do not merely repeat questionnaire gaps. The conclusion must explain what "
+                "the standards/RAG analysis added and why it changes the risk assessment.\n\n"
+                "- Name the most important standards or control references from "
+                "toolchain_delta or risk_assessment_chains in risk_exposure or conclusion. "
+                "Do not write only a count such as '7 controls'.\n\n"
+                "- Distinguish control absence from missing evidence. If the packet says "
+                "evidence is missing or pending, say unverified or not evidenced rather than "
+                "claiming the control does not exist.\n\n"
                 "Output contract:\n"
                 "Return only valid JSON with exactly these keys: management_summary, "
                 "introduction, objective, risk_exposure, conclusion.\n\n"
                 "Output discipline:\n"
-                "Use controlled prose. Each paragraph must be 2-4 sentences. Put the most "
-                "important finding first. Avoid filler, adjectives, methodology explanations, "
-                "and long background education."
+                "Use controlled prose. Each paragraph must be 2-4 sentences and at most "
+                "120 words. Put the most important finding first. Avoid filler, adjectives, "
+                "methodology explanations, and long background education."
             ),
         },
         {
@@ -966,7 +1100,9 @@ def _paragraph_prompt(
             "content": (
                 "Task:\n"
                 "Write only the five requested paragraph values. Each paragraph must be "
-                "business-readable, concise, and grounded in the validated facts.\n\n"
+                "business-readable, concise, and grounded in the validated facts. Use the "
+                "risk_assessment_chains and toolchain_delta to show the analysis added beyond "
+                "the original SQL/questionnaire facts.\n\n"
                 "Required output JSON:\n"
                 "{\n"
                 '  "management_summary": "",\n'
@@ -1095,10 +1231,263 @@ def _parse_paragraphs_strict(raw: str) -> dict[str, str]:
     return {key: str(data[key]).strip() for key in keys}
 
 
+def _deterministic_paragraphs(validated_fact_packet: dict[str, Any]) -> dict[str, str]:
+    vendor = _dict(validated_fact_packet.get("vendor"))
+    tier = _dict(validated_fact_packet.get("tier"))
+    vendor_name = str(vendor.get("name") or "The vendor")
+    tier_level = str(tier.get("level") or "unknown")
+    weaknesses = validated_fact_packet.get("weaknesses") or []
+    chains = validated_fact_packet.get("risk_assessment_chains") or []
+    delta = _dict(validated_fact_packet.get("toolchain_delta"))
+    gaps = _first_values(
+        [
+            gap
+            for chain in chains
+            for gap in (_dict(chain).get("confirmed_gaps") or [])
+        ],
+        3,
+    ) or _first_values([_dict(item).get("summary") for item in weaknesses], 2)
+    added = _controls_from_chains(chains, per_chain=2, limit=4) or _first_values(
+        delta.get("added_by_rag") or [],
+        4,
+    )
+    risks = _first_values(
+        [
+            _dict(_dict(chain).get("inherent_risk")).get("risk_statement")
+            for chain in chains
+        ],
+        3,
+    )
+    residual = _first_values(
+        [
+            _dict(_dict(chain).get("residual_concern")).get("remaining_issue")
+            for chain in chains
+        ],
+        2,
+    )
+    missing = _missing_from_chains(chains, limit=3) or _first_values(
+        delta.get("remaining_uncertainty") or [],
+        2,
+    )
+    added_text = _join_human(added) or "standards-backed control and risk mappings"
+    gap_text = _join_human(gaps) or "the identified questionnaire weaknesses"
+    risk_text = _join_human(risks) or "vendor risk exposure"
+    residual_text = _join_human(residual) or "residual risk depends on operating evidence"
+    missing_text = _join_human(missing) or "implementation evidence and test results"
+    return {
+        "management_summary": (
+            f"{vendor_name} is a Tier {tier_level} vendor with validated weaknesses: "
+            f"{gap_text}. The toolchain maps these gaps to {added_text}, linking them "
+            f"to {risk_text}."
+        ),
+        "introduction": (
+            f"This draft summarizes the validated assessment facts for {vendor_name}. "
+            "It separates what the questionnaire already showed from what the standards "
+            "retrieval and risk-chain analysis added."
+        ),
+        "objective": (
+            "The objective is to help the business owner understand the vendor risk posture "
+            f"from Tier {tier_level} context, weak control answers, and source-backed control "
+            "requirements."
+        ),
+        "risk_exposure": (
+            f"The main exposure is {risk_text}. Standards/RAG mapped the gaps to "
+            f"{added_text}. Residual concern remains because {_lower_first(residual_text)}."
+        ),
+        "conclusion": (
+            f"{vendor_name} should address {gap_text} with named controls such as "
+            f"{added_text}. Resilience remains evidence-dependent until response ownership, "
+            "monitoring, and recovery testing are evidenced. Analyst review should confirm "
+            f"{missing_text} before this draft becomes an immutable snapshot."
+        ),
+    }
+
+
+def _report_fact_packet(validated_fact_packet: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "vendor": {
+            "name": _dict(validated_fact_packet.get("vendor")).get("name"),
+            "vendor_type": _dict(validated_fact_packet.get("vendor")).get("vendor_type"),
+            "business_relationship": _dict(validated_fact_packet.get("vendor")).get(
+                "business_relationship"
+            ),
+        },
+        "tier": {
+            "level": _dict(validated_fact_packet.get("tier")).get("level"),
+            "definition": _dict(validated_fact_packet.get("tier")).get("definition"),
+        },
+        "strengths": [
+            {
+                "question_id": _dict(item).get("question_id"),
+                "summary": _dict(item).get("summary"),
+            }
+            for item in (validated_fact_packet.get("strengths") or [])[:3]
+        ],
+        "weaknesses": [
+            {
+                "question_id": _dict(item).get("question_id"),
+                "summary": _dict(item).get("summary"),
+                "control": _dict(item).get("control"),
+                "compliance": _dict(item).get("compliance"),
+                "maturity": _dict(item).get("maturity"),
+            }
+            for item in (validated_fact_packet.get("weaknesses") or [])[:5]
+        ],
+        "risk_assessment_chains": [
+            _compact_risk_chain_for_report(chain)
+            for chain in (validated_fact_packet.get("risk_assessment_chains") or [])[:5]
+        ],
+        "toolchain_delta": _compact_toolchain_delta_for_report(
+            validated_fact_packet.get("toolchain_delta")
+        ),
+        "reporting_rules": validated_fact_packet.get("reporting_rules"),
+    }
+
+
+def _compact_risk_chain_for_report(chain: Any) -> dict[str, Any]:
+    item = _dict(chain)
+    linked_control = _dict(item.get("linked_control"))
+    return {
+        "question_id": item.get("question_id"),
+        "linked_control": {
+            "framework": linked_control.get("framework"),
+            "control_id": linked_control.get("control_id"),
+            "title": linked_control.get("title"),
+            "control_type": linked_control.get("control_type"),
+        },
+        "known_from_assessment": _first_values(item.get("known_from_assessment") or [], 2),
+        "standards_requirements_added": _requirement_names(
+            item.get("standards_requirements_added") or [],
+            4,
+        ),
+        "confirmed_gaps": _first_values(item.get("confirmed_gaps") or [], 2),
+        "threat_scenarios": _first_values(item.get("threat_scenarios") or [], 3),
+        "vulnerabilities": _first_values(item.get("vulnerabilities") or [], 3),
+        "inherent_risk": item.get("inherent_risk"),
+        "recommended_controls_by_function": _compact_controls_by_function(
+            item.get("recommended_controls_by_function")
+        ),
+        "resilience_effects": _first_values(item.get("resilience_effects") or [], 2),
+        "residual_concern": item.get("residual_concern"),
+        "missing_information": _first_values(item.get("missing_information") or [], 2),
+        "added_value_summary": item.get("added_value_summary"),
+    }
+
+
+def _compact_toolchain_delta_for_report(value: Any) -> dict[str, Any]:
+    delta = _dict(value)
+    return {
+        "already_known_from_sql": _first_values(delta.get("already_known_from_sql") or [], 3),
+        "added_by_rag": _first_values(delta.get("added_by_rag") or [], 6),
+        "added_by_graphrag": _first_values(delta.get("added_by_graphrag") or [], 4),
+        "added_by_resilience_analysis": _first_values(
+            delta.get("added_by_resilience_analysis") or [],
+            3,
+        ),
+        "remaining_uncertainty": _first_values(delta.get("remaining_uncertainty") or [], 4),
+        "business_interpretation": delta.get("business_interpretation"),
+    }
+
+
+def _requirement_names(requirements: list[Any], limit: int) -> list[str]:
+    return _first_values(
+        [
+            _dict(requirement).get("control") or requirement
+            for requirement in requirements
+        ],
+        limit,
+    )
+
+
+def _compact_controls_by_function(value: Any) -> dict[str, list[str]]:
+    controls = _dict(value)
+    return {
+        function: _first_values(items, 3)
+        for function, items in controls.items()
+        if isinstance(items, list) and items
+    }
+
+
+def _compact_paragraph_attempts(attempts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for attempt in attempts:
+        gate = _dict(attempt.get("quality_gate"))
+        compact.append(
+            {
+                "attempt": attempt.get("attempt"),
+                "raw_model_output_preview": attempt.get("raw_model_output_preview"),
+                "parsed_paragraphs": attempt.get("parsed_paragraphs"),
+                "quality_gate": {
+                    "passed": gate.get("passed"),
+                    "summary": gate.get("summary"),
+                    "issues": gate.get("issues"),
+                },
+                "token_usage": attempt.get("token_usage"),
+            }
+        )
+    return compact
+
+
+def _first_values(values: list[Any], limit: int) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = str(value or "").strip()
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _controls_from_chains(
+    chains: list[Any],
+    *,
+    per_chain: int,
+    limit: int,
+) -> list[str]:
+    controls: list[str] = []
+    for chain in chains:
+        requirements = _dict(chain).get("standards_requirements_added") or []
+        controls.extend(_requirement_names(requirements, per_chain))
+    return _first_values(controls, limit)
+
+
+def _missing_from_chains(chains: list[Any], *, limit: int) -> list[str]:
+    values: list[str] = []
+    for chain in chains:
+        values.extend(_first_values(_dict(chain).get("missing_information") or [], 1))
+    return _first_values(values, limit)
+
+
+def _join_human(values: list[str]) -> str:
+    clean_values = [value.strip().rstrip(".") for value in values if value.strip()]
+    if not clean_values:
+        return ""
+    if len(clean_values) == 1:
+        return clean_values[0]
+    if len(clean_values) == 2:
+        return f"{clean_values[0]} and {clean_values[1]}"
+    return ", ".join(clean_values[:-1]) + f", and {clean_values[-1]}"
+
+
+def _lower_first(value: str) -> str:
+    if not value:
+        return value
+    return value[0].lower() + value[1:]
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _validated_fact_packet(
     packet: FoundationAssessmentPacket,
     findings: dict[str, list[AssessmentFinding]],
     rag_answers: list[dict[str, Any]],
+    risk_assessment: dict[str, Any],
 ) -> dict[str, Any]:
     validated_risk_facts: list[dict[str, Any]] = []
     for answer in rag_answers:
@@ -1128,8 +1517,11 @@ def _validated_fact_packet(
         "strengths": [finding.model_dump(mode="json") for finding in findings["strengths"]],
         "weaknesses": [finding.model_dump(mode="json") for finding in findings["weaknesses"]],
         "validated_risk_facts": validated_risk_facts,
+        "risk_assessment_chains": risk_assessment.get("risk_assessment_chains") or [],
+        "toolchain_delta": risk_assessment.get("toolchain_delta") or {},
         "reporting_rules": {
             "do_not_invent_new_facts": True,
+            "must_explain_toolchain_added_value": True,
             "draft_status": "analyst_review_required",
             "source": "deterministic_packet_from_validated_workflow_steps",
         },
@@ -1141,6 +1533,7 @@ def _final_result(
     paragraphs: dict[str, str],
     findings: dict[str, list[AssessmentFinding]],
     rag_answers: list[dict[str, Any]],
+    risk_assessment: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "assessment_id": packet.assessment_id,
@@ -1158,8 +1551,10 @@ def _final_result(
                 for finding in findings["weaknesses"]
                 if not finding.evidence_ids
             ],
+            "analysis_added_by_toolchain": risk_assessment.get("toolchain_delta") or {},
         },
         "risk_evaluations": rag_answers,
+        "risk_assessment_chains": risk_assessment.get("risk_assessment_chains") or [],
         "snapshot_ready": False,
         "source_question_ids": [result.question_id for result in packet.questionnaire_results],
     }

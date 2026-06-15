@@ -39,11 +39,11 @@ class WorkflowFakeChatModel:
                     ),
                     "risk_exposure": (
                         "Acme SaaS exposure is driven by missing endpoint anti-malware "
-                        "controls and untested recovery capability."
+                        "controls mapped to CIS 10.1 and untested recovery capability."
                     ),
                     "conclusion": (
-                        "Acme SaaS should remain a draft assessment until the endpoint "
-                        "and recovery gaps are reviewed."
+                        "Acme SaaS should remediate CIS 10.1 endpoint controls and NIST "
+                        "CSF recovery gaps before the assessment is approved."
                     ),
                 }
             )
@@ -167,6 +167,7 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     assert any(name.startswith("Prepare model prompt for ") for name in step_names)
     assert any(name.startswith("Ask model to write risk answer for ") for name in step_names)
     assert any(name.startswith("Store risk answer for ") for name in step_names)
+    assert "Build risk assessment chains and added-value delta" in step_names
     assert step_names[-1] == "Prepare final result for the application"
     assert body["steps"][1]["input"] == body["steps"][0]["output"]
     assert body["steps"][2]["input"] == body["steps"][1]["output"]
@@ -193,6 +194,8 @@ def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
     ]
     assert body["final_result"]["assessment_id"] == packet["assessment_id"]
     assert body["final_result"]["risk_evaluations"]
+    assert body["final_result"]["risk_assessment_chains"]
+    assert body["final_result"]["draft_sections"]["analysis_added_by_toolchain"]["added_by_rag"]
     assert body["cost_estimate"]["llm_call_count"] >= 2
     assert body["cost_estimate"]["estimate_policy"] == "conservative_workflow_reserve"
     assert body["cost_estimate"]["estimated_cost_usd"] == 0
@@ -354,7 +357,7 @@ def test_complete_assessment_token_budget_can_stop_oversized_model_output(
     assert "Token budget guard" in response.json()["detail"]
 
 
-def test_complete_assessment_fails_visible_quality_gate_for_bad_final_paragraphs(
+def test_complete_assessment_recovers_from_bad_final_paragraphs_with_renderer(
     tmp_path: Path,
     monkeypatch: Any,
 ) -> None:
@@ -379,10 +382,15 @@ def test_complete_assessment_fails_visible_quality_gate_for_bad_final_paragraphs
         },
     )
 
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "business report" in detail
-    assert "Do not approve" in detail
+    assert response.status_code == 200
+    body = response.json()
+    step_names = [step["name"] for step in body["steps"]]
+    assert "Reject unsafe model-drafted report paragraphs" in step_names
+    assert "Render report paragraphs deterministically" in step_names
+    assert body["final_result"]["draft_sections"]["management_summary"]
+    assert body["final_result"]["draft_sections"]["analysis_added_by_toolchain"][
+        "added_by_rag"
+    ]
 
 
 def test_complete_assessment_job_endpoint_runs_to_completion(
@@ -581,6 +589,60 @@ def test_rag_answer_dump_does_not_carry_debug_payloads() -> None:
     assert "debug" not in dumped
     assert "unused" not in dumped["sources"][0]["metadata"]
     assert len(json.dumps(dumped)) < 3_000
+
+
+def test_deterministic_report_renderer_uses_clean_gaps_and_cross_chain_controls() -> None:
+    paragraphs = complete_assessment._deterministic_paragraphs(
+        {
+            "vendor": {"name": "Acme SaaS"},
+            "tier": {"level": 2},
+            "weaknesses": [
+                {
+                    "summary": (
+                        "NIST CSF PR.PS-01 is assessed as no compliance with basic "
+                        "maturity. Analyst note: No anti-malware solution is deployed."
+                    )
+                }
+            ],
+            "risk_assessment_chains": [
+                {
+                    "confirmed_gaps": ["No anti-malware deployment"],
+                    "standards_requirements_added": [
+                        {"control": "CIS Safeguard 10.1 - Anti-Malware"},
+                        {"control": "SCF END-04.7 - Always On Protection"},
+                    ],
+                    "inherent_risk": {"risk_statement": "Malware infections"},
+                    "residual_concern": {
+                        "remaining_issue": "Implementation evidence is still missing."
+                    },
+                    "missing_information": ["Endpoint monitoring evidence"],
+                },
+                {
+                    "confirmed_gaps": ["Pending disaster recovery testing"],
+                    "standards_requirements_added": [
+                        {"control": "SCF BCD-01.2 - Coordinate Providers"},
+                        {"control": "SCF BCD-02.2 - Continue Essential Functions"},
+                    ],
+                    "inherent_risk": {"risk_statement": "Business continuity disruption"},
+                    "residual_concern": {
+                        "remaining_issue": "Recovery testing evidence is still missing."
+                    },
+                    "missing_information": ["DR test report"],
+                },
+            ],
+            "toolchain_delta": {
+                "added_by_resilience_analysis": [
+                    "Recovery controls show whether the vendor can restore operations."
+                ]
+            },
+        }
+    )
+
+    assert "assessed as no compliance" not in paragraphs["management_summary"]
+    assert "No anti-malware deployment" in paragraphs["management_summary"]
+    assert "Pending disaster recovery testing" in paragraphs["management_summary"]
+    assert "CIS Safeguard 10.1" in paragraphs["conclusion"]
+    assert "SCF BCD-01.2" in paragraphs["conclusion"]
 
 
 def _memory_pipeline(tmp_path: Path, chat_model: object) -> GraphRagPipeline:

@@ -171,6 +171,12 @@ http://127.0.0.1:8000/mock/foundation
 - Runtime quality-gate implementation: implemented for risk-answer model calls and final
   paragraph model calls. Gates validate prompt contracts, schema/content/evidence quality, and
   final report consistency; failed gates retry and then fail visibly.
+- Final report model prompting now uses a compact validated report fact packet instead of the full
+  internal validated object. The prompt and validator enforce controlled prose: 2-4 sentences and
+  at most 120 words per paragraph.
+- If final report model repair attempts fail, the workflow visibly rejects those drafts and may
+  render deterministic paragraphs from the validated risk-chain model. That deterministic output
+  must pass the same final paragraph gate before final packaging.
 - Browser failure modal: implemented for workflow/preflight/job failures with operator and
   system-owner remediation guidance.
 - Generation temperature: set to `0` for OpenAI and Ollama clients to reduce variation between
@@ -181,13 +187,19 @@ http://127.0.0.1:8000/mock/foundation
   - Qdrant: 22,800 chunks.
   - BM25 JSONL: 22,800 unique chunks.
   - Neo4j: 2,800 nodes and 14,021 relationships.
-- Last successful local workflow run:
-  - `data/workflow_runs/run-2026-06-14T215427209749+0000-ba59a442/run.json`
+- Last successful audited local workflow run:
+  - `data/workflow_runs/run-2026-06-15T131050315525+0000-63502dda/run.json`
   - model `qwen3:14b`
-  - 5 workflow steps
-  - 2 risk evaluations
-  - anti-malware gap produced CIS Safeguard 10.1-10.5 and SCF END-04 controls
+  - 21 workflow steps
+  - audit passed with 0 blocking issues and 0 warnings
+  - actual usage: 11,071 input tokens + 3,877 output tokens = 14,948 total
+  - preflight cap: 46,758 total tokens
+  - anti-malware gap produced CIS Safeguard 10.1, CIS Control 10, and SCF END-04 controls
   - DR/business-continuity gap produced SCF BCD recovery controls
+  - final report model attempts were rejected for unsupported `critical` wording and missing named
+    controls
+  - deterministic renderer produced gated paragraphs that named CIS/SCF controls across both risk
+    chains and stayed under the 120-word cap
 - Browser verification in this goal run:
   - `http://127.0.0.1:8000/mock/foundation` showed `Preflight estimate` plus
     `Background workflow job`.
@@ -315,13 +327,53 @@ Implemented correction:
 
 Validated live run:
 
-- Run ID: `run-2026-06-15T114923957803+0000-4e2712b8`
+- Run ID: `run-2026-06-15T131050315525+0000-63502dda`
 - Model: `ollama:qwen3:14b`
-- Result: completed, 19 steps, audit passed with 0 blocking issues and 0 warnings.
-- Actual tokens: 5,983 input + 2,512 output = 8,495 total.
+- Result: completed, 21 steps, audit passed with 0 blocking issues and 0 warnings.
+- Actual tokens: 11,071 input + 3,877 output = 14,948 total.
 - Preflight cap: 46,758 total tokens.
-- Manual spot-check: Q2 and Q3 risk answers were compact and source-grounded; the final report no
-  longer included unsupported acceptable-risk threshold language.
+- Manual spot-check: Q2 and Q3 risk answers were compact and source-grounded. The final report
+  prompt included role, objective, trusted fact boundary, forbidden behavior, JSON output contract,
+  compact validated context, and 120-word paragraph limit. The model report attempts were rejected
+  for unsupported `critical` wording and missing named controls, then the deterministic renderer
+  produced clean gated paragraphs under the 120-word cap.
+
+## 2026-06-15 Risk-Chain And Final Report Hardening
+
+The complete-assessment workflow now builds an explicit risk assessment chain before report
+drafting. This closes the product gap where the final report only repeated questionnaire gaps
+instead of showing what the RAG/GraphRAG toolchain added.
+
+Implemented chain fields:
+
+- known SQL/questionnaire facts;
+- standards requirements added by RAG;
+- confirmed gaps;
+- threat scenarios;
+- vulnerabilities;
+- inherent risk;
+- recommended controls by function;
+- risk/resilience effects;
+- residual concern;
+- missing information;
+- source mappings;
+- added-value summary and toolchain delta.
+
+The final report prompt receives a compact report fact packet derived from that chain. It does not
+receive raw retrieved chunks, raw graph rows, debug data, or full model responses. The prompt gate
+requires role, objective, trusted fact boundary, forbidden behavior, output contract, `Do not repair
+JSON`, `120 words`, named control references, and distinction between missing controls and missing
+evidence. The prompt quality gate rejects oversized final-report prompts before a model call.
+
+The final report output gate now also rejects unsupported urgency/severity wording such as
+`critical`, `immediate`, `unacceptable`, or `severe`. If RAG added concrete control references such
+as CIS, SCF, NIST, END-04, or BCD-01, risk exposure or conclusion must name at least one of them
+instead of hiding the result behind generic wording like `7 controls`.
+
+If the selected model ignores the final report contract after repair retries, the workflow records
+`Reject unsafe model-drafted report paragraphs` and then may use
+`Render report paragraphs deterministically`. That renderer is not allowed to invent facts; it uses
+only the validated fact packet and must pass the same final paragraph output gate.
 
 ## Known Risks And Improvements
 

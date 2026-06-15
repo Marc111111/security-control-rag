@@ -494,6 +494,32 @@ def validate_workflow_step_contract(
                 )
             )
 
+    if step_name == "Build risk assessment chains and added-value delta":
+        chains = _dict(output_payload).get("risk_assessment_chains")
+        delta = _dict(output_payload).get("toolchain_delta")
+        if not isinstance(chains, list) or not chains:
+            issues.append(
+                _step_issue(
+                    "output.risk_assessment_chains",
+                    "Risk assessment chains are missing.",
+                    system_fix=(
+                        "Build one risk assessment chain per weak questionnaire answer before "
+                        "report drafting."
+                    ),
+                )
+            )
+        if not isinstance(delta, dict) or not delta.get("added_by_rag"):
+            issues.append(
+                _step_issue(
+                    "output.toolchain_delta",
+                    "Added-value delta does not show what RAG added beyond SQL.",
+                    system_fix=(
+                        "Compare initial assessment gaps with standards-backed risk facts and "
+                        "store the added controls, risks, and resilience findings."
+                    ),
+                )
+            )
+
     if step_name == "Ask model to draft report paragraphs":
         prompt = _dict(_dict(input_payload).get("model_prompt"))
         chars = int(prompt.get("total_characters_sent_to_model") or 0)
@@ -766,6 +792,97 @@ def validate_risk_answer(
     )
 
 
+def validate_risk_assessment_chains(value: dict[str, Any]) -> GateResult:
+    issues: list[GateIssue] = []
+    chains = value.get("risk_assessment_chains")
+    delta = value.get("toolchain_delta")
+    if not isinstance(chains, list) or not chains:
+        issues.append(
+            GateIssue(
+                field="risk_assessment_chains",
+                message="No risk assessment chains were produced.",
+                operator_fix=(
+                    "Do not approve this run. The workflow has not translated gaps into a "
+                    "risk assessment model."
+                ),
+                system_fix=(
+                    "Build one chain per weak answer with known facts, standards additions, "
+                    "risks, controls, resilience, residual concern, and missing evidence."
+                ),
+            )
+        )
+    for index, chain in enumerate(chains or []):
+        prefix = f"risk_assessment_chains[{index}]"
+        required = [
+            "known_from_assessment",
+            "standards_requirements_added",
+            "confirmed_gaps",
+            "threat_scenarios",
+            "vulnerabilities",
+            "inherent_risk",
+            "recommended_controls_by_function",
+            "control_effects",
+            "residual_concern",
+            "added_value_summary",
+        ]
+        for field_name in required:
+            if not _dict(chain).get(field_name):
+                issues.append(
+                    GateIssue(
+                        field=f"{prefix}.{field_name}",
+                        message=(
+                            "Risk assessment chain is missing required business analysis "
+                            f"field: {field_name}."
+                        ),
+                        operator_fix=(
+                            "Do not approve this run. The final report would not have enough "
+                            "material to answer the risk question."
+                        ),
+                        system_fix=(
+                            "Populate this field before report drafting, or fail with "
+                            "insufficient evidence."
+                        ),
+                    )
+                )
+        if not _dict(_dict(chain).get("inherent_risk")).get("risk_statement"):
+            issues.append(
+                GateIssue(
+                    field=f"{prefix}.inherent_risk.risk_statement",
+                    message="Inherent risk statement is missing.",
+                    operator_fix="Do not approve a risk chain with no risk statement.",
+                    system_fix="Carry the validated risk from the RAG answer into the risk chain.",
+                )
+            )
+    if not isinstance(delta, dict) or not delta.get("added_by_rag"):
+        issues.append(
+            GateIssue(
+                field="toolchain_delta.added_by_rag",
+                message="The workflow did not record what RAG added beyond the SQL facts.",
+                operator_fix=(
+                    "Do not approve a final report that cannot show the analysis added by the "
+                    "toolchain."
+                ),
+                system_fix=(
+                    "Create a deterministic delta comparing known assessment facts with "
+                    "standards-backed controls, risks, resilience findings, and uncertainty."
+                ),
+            )
+        )
+    if issues:
+        return failed_gate(
+            "risk_assessment_chain",
+            "Risk assessment chain did not meet the required product-analysis contract.",
+            issues,
+        )
+    return passed_gate(
+        "risk_assessment_chain",
+        (
+            "Risk assessment chains include known facts, added RAG value, risk, "
+            "controls, and residual concern."
+        ),
+    )
+
+
 def prune_unsupported_risk_answer(
     *,
     answer: StructuredRiskAnswer,
@@ -827,12 +944,13 @@ def validate_final_paragraphs(
             )
         elif _is_bad_text(value):
             issues.append(_bad_text_issue(key, value))
-        elif _word_count(value) > 140:
+        elif _word_count(value) > 120:
             issues.append(
                 GateIssue(
                     field=key,
                     message=(
-                        "Report paragraph is too long for the business summary contract."
+                        "Report paragraph is too long for the business summary contract "
+                        "(maximum 120 words)."
                     ),
                     operator_fix=(
                         "Do not approve this report section; it is too verbose for review."
@@ -894,6 +1012,84 @@ def validate_final_paragraphs(
                 system_fix=(
                     "Forbid threshold or acceptance statements unless the validated fact packet "
                     "contains the threshold and decision basis."
+                ),
+            )
+        )
+
+    validated_text = str(validated_facts).lower()
+    unsupported_emphasis = [
+        term
+        for term in ["critical", "immediate", "unacceptable", "severe"]
+        if term in joined and term not in validated_text
+    ]
+    if unsupported_emphasis:
+        issues.append(
+            GateIssue(
+                field="paragraphs",
+                message=(
+                    "Final paragraphs use urgency or severity wording that is not present "
+                    f"in the validated facts: {', '.join(unsupported_emphasis)}."
+                ),
+                operator_fix=(
+                    "Do not approve this report; the wording overstates what the evidence "
+                    "supports."
+                ),
+                system_fix=(
+                    "Calibrate final report wording to the validated facts. Use high/medium/low "
+                    "only when those ratings are in the fact packet, and avoid urgency words "
+                    "unless the packet contains them."
+                ),
+            )
+        )
+
+    delta = _dict(validated_facts.get("toolchain_delta"))
+    added_by_rag = [str(item) for item in delta.get("added_by_rag") or []]
+    added_by_resilience = [
+        str(item) for item in delta.get("added_by_resilience_analysis") or []
+    ]
+    added_terms = _important_terms([*added_by_rag, *added_by_resilience])
+    if added_terms and not any(term in joined for term in added_terms):
+        issues.append(
+            GateIssue(
+                field="paragraphs",
+                message=(
+                    "Final paragraphs do not explain the standards/RAG value added beyond "
+                    "the questionnaire gaps."
+                ),
+                operator_fix=(
+                    "Do not approve this report; it repeats assessment gaps without showing "
+                    "the actual risk analysis."
+                ),
+                system_fix=(
+                    "Use toolchain_delta and risk_assessment_chains in the report prompt, and "
+                    "require at least one standards/control/risk/resilience term in the final "
+                    "paragraphs."
+                ),
+            )
+        )
+
+    framework_terms = _framework_terms(added_by_rag)
+    risk_or_conclusion = " ".join(
+        [
+            paragraphs.get("risk_exposure", ""),
+            paragraphs.get("conclusion", ""),
+        ]
+    ).lower()
+    if framework_terms and not any(term in risk_or_conclusion for term in framework_terms):
+        issues.append(
+            GateIssue(
+                field="risk_exposure",
+                message=(
+                    "Risk exposure or conclusion does not name any standards/control reference "
+                    "that RAG added."
+                ),
+                operator_fix=(
+                    "Do not approve this report; it hides the concrete control mapping behind "
+                    "generic wording."
+                ),
+                system_fix=(
+                    "Require risk_exposure or conclusion to name at least one added framework "
+                    "or control reference such as CIS, SCF, NIST, END-04, or BCD-01."
                 ),
             )
         )
@@ -1093,6 +1289,41 @@ def _validated_terms(validated_facts: dict[str, Any]) -> set[str]:
     ]:
         if candidate in raw:
             terms.add(candidate)
+    return terms
+
+
+def _important_terms(values: list[str]) -> set[str]:
+    terms: set[str] = set()
+    for value in values:
+        lower = value.lower()
+        for match in re.findall(
+            r"\b(?:cis|scf|iso|nist|end-\d+(?:\.\d+)?|bcd-\d+(?:\.\d+)?)\b",
+            lower,
+        ):
+            terms.add(match)
+        for candidate in [
+            "business continuity",
+            "recovery",
+            "resilience",
+            "detective",
+            "preventative",
+            "response",
+        ]:
+            if candidate in lower:
+                terms.add(candidate)
+    return terms
+
+
+def _framework_terms(values: list[str]) -> set[str]:
+    terms: set[str] = set()
+    for value in values:
+        lower = value.lower()
+        for match in re.findall(
+            r"\b(?:cis|scf|iso|nist|end-\d+(?:\.\d+)?|bcd-\d+(?:\.\d+)?|"
+            r"pr\.[a-z]{2}-\d+|\d+\.\d+)\b",
+            lower,
+        ):
+            terms.add(match)
     return terms
 
 

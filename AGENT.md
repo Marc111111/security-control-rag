@@ -287,6 +287,19 @@ the parser hid it behind generic paragraphs. The final report writer now receive
 fact packet, not raw debug dumps or malformed risk answers. The browser shows failed workflow/job
 quality gates in a modal with operator and system-owner remediation guidance.
 
+Final report drafting now has an additional safeguard: the model receives a compact report fact
+packet rather than the full internal validated object, the prompt contract must include an explicit
+120-word maximum per paragraph, and the output validator enforces that cap. If final report model
+repair attempts still fail, the workflow must visibly reject those model drafts. It may then render
+safe report paragraphs deterministically from the validated risk-chain model, but that renderer must
+pass the same final paragraph gate before the result can be packaged.
+
+Final report wording must stay evidence-calibrated. The prompt and validator forbid unsupported
+urgency/severity wording such as `critical`, `immediate`, `unacceptable`, or `severe`, require the
+report to distinguish missing controls from missing evidence, and require risk exposure or
+conclusion to name concrete standards/control references added by RAG when such references exist.
+Avoid vague conclusions that only say `7 controls`.
+
 GraphRAG prompt context must stay clean. A later Q2 / PR.PS-01 failure showed that text retrieval
 found the right CIS/SCF anti-malware evidence, but raw graph rows included loose, malformed
 relationship labels and distracted the local model. Qdrant/BM25 text evidence is now authoritative;
@@ -317,5 +330,8 @@ On 2026-06-15, the complete-assessment workflow was hardened with an API-driven 
 - Final report validation rejects unsupported risk-acceptance/threshold claims such as
   `acceptable risk` unless the validated fact packet explicitly contains that decision basis.
 - Latest validated run at the time of this note:
-  `run-2026-06-15T114923957803+0000-4e2712b8`, `qwen3:14b`, 19 steps, audit passed,
-  actual tokens 5,983 input + 2,512 output = 8,495 total, preflight cap 46,758.
+  `run-2026-06-15T131050315525+0000-63502dda`, `qwen3:14b`, 21 steps, audit passed,
+  actual tokens 11,071 input + 3,877 output = 14,948 total, preflight cap 46,758.
+  The final report model attempts were rejected for unsupported `critical` wording and missing
+  named controls; the deterministic renderer produced gated paragraphs of 66, 66, and 86 words for
+  management summary, risk exposure, and conclusion.
