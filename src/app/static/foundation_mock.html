@@ -65,6 +65,27 @@
       }
       .panel-title { font-size: 13px; font-weight: 800; color: #25313d; }
       .panel-body { padding: 14px; overflow: auto; }
+      .workflow-panel {
+        min-height: 0;
+        flex: 1 1 58%;
+        display: flex;
+        flex-direction: column;
+      }
+      .workflow-panel > .panel-body {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow: auto;
+      }
+      .result-panel {
+        flex: 0 0 min(24vh, 260px);
+        min-height: 150px;
+        display: flex;
+        flex-direction: column;
+      }
+      .result-panel > .panel-body {
+        min-height: 0;
+        flex: 1 1 auto;
+      }
       textarea {
         width: 100%;
         min-height: 380px;
@@ -389,15 +410,15 @@
         <div class="metrics" id="metrics"></div>
       </section>
       <section class="stack">
-        <div class="panel">
+        <div class="panel workflow-panel">
           <div class="panel-header"><div class="panel-title">Execution Workflow</div></div>
           <div class="panel-body"><div class="workflow" id="workflow"><div class="empty">No run yet.</div></div></div>
         </div>
-        <div class="panel">
+        <div class="panel result-panel">
           <div class="panel-header"><div class="panel-title">Final Result Contract</div></div>
           <div class="panel-body"><pre id="finalResult"></pre></div>
         </div>
-        <div class="panel">
+        <div class="panel result-panel">
           <div class="panel-header"><div class="panel-title">Saved Comparison Runs</div></div>
           <div class="panel-body"><pre id="runs"></pre></div>
         </div>
