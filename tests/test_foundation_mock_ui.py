@@ -25,6 +25,10 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "ETA" in response.text
     assert "No run history yet" in response.text
     assert "historicalDurationEstimate" in response.text
+    assert "No completed runs to compare yet" in response.text
+    assert "renderSavedRuns" in response.text
+    assert "openSavedRun" in response.text
+    assert "Saved run summary" in response.text
     assert "syncDirtyDbForm" in response.text
     assert "Open Codex review packet" in response.text
     assert "buildCodexReviewPacket" in response.text

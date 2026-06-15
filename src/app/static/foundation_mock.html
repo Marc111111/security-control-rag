@@ -458,6 +458,66 @@
         overflow-wrap: anywhere;
         font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
       }
+      .runs-view {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        font-size: 12px;
+      }
+      .runs-help {
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .runs-empty {
+        border: 1px dashed #b9c9c4;
+        border-radius: 8px;
+        padding: 12px;
+        background: #fbfcfa;
+        color: var(--muted);
+        line-height: 1.4;
+      }
+      .runs-table {
+        width: 100%;
+        border-collapse: collapse;
+        table-layout: fixed;
+      }
+      .runs-table th,
+      .runs-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 7px 6px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .runs-table th {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 900;
+      }
+      .runs-table td {
+        color: #22313d;
+        overflow-wrap: anywhere;
+      }
+      .run-status {
+        display: inline-flex;
+        border-radius: 999px;
+        padding: 2px 7px;
+        background: var(--soft);
+        color: #0b5f59;
+        font-weight: 800;
+      }
+      .run-status.incomplete {
+        background: #fff7ed;
+        color: #8a3b0b;
+      }
+      .run-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+      .run-actions button {
+        padding: 4px 6px;
+        font-size: 11px;
+      }
       .empty { padding: 16px; color: var(--muted); font-size: 14px; }
       .warning { color: var(--warn); }
       @media (max-width: 1120px) {
@@ -569,7 +629,7 @@
         </div>
         <div class="panel result-panel">
           <div class="panel-header"><div class="panel-title">Saved Comparison Runs</div></div>
-          <div class="panel-body"><pre id="runs"></pre></div>
+          <div class="panel-body"><div class="runs-view" id="runs"></div></div>
         </div>
       </section>
     </main>
@@ -1418,7 +1478,107 @@
       async function refreshRuns() {
         const runs = await getJson("/api/workflows/complete-assessment/runs");
         runHistory = runs;
-        runsEl.textContent = JSON.stringify(runs, null, 2);
+        renderSavedRuns(runs);
+      }
+
+      function renderSavedRuns(runs) {
+        const list = Array.isArray(runs) ? runs : [];
+        if (!list.length) {
+          runsEl.innerHTML = `
+            <div class="runs-empty">
+              <strong>No completed runs to compare yet.</strong><br />
+              Run the workflow with one or more models. Completed runs will appear here with
+              model, cost, duration, and buttons to inspect or compare the result.
+            </div>`;
+          return;
+        }
+        const rows = list.map((run) => {
+          const status = savedRunStatus(run);
+          return `<tr>
+            <td>${escapeHtml(formatRunDate(run.created_at))}</td>
+            <td>${escapeHtml(run.provider || "n/a")}:${escapeHtml(run.model || "n/a")}</td>
+            <td><span class="run-status ${status === "Incomplete" ? "incomplete" : ""}">${escapeHtml(status)}</span></td>
+            <td>${escapeHtml(savedRunCost(run))}</td>
+            <td>${escapeHtml(formatDuration(run.duration_seconds))}</td>
+            <td class="run-actions">
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'summary')">View</button>
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'json')">JSON</button>
+            </td>
+          </tr>`;
+        }).join("");
+        runsEl.innerHTML = `
+          <div class="runs-help">
+            Use this to compare completed workflow runs across models or settings. The table is a
+            readable history; JSON is only there when you need the full technical contract.
+          </div>
+          <table class="runs-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Model</th>
+                <th>Status</th>
+                <th>Cost</th>
+                <th>Duration</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      }
+
+      function savedRunStatus(run) {
+        if (run.completed_at || run.duration_seconds) return "Completed";
+        return "Incomplete";
+      }
+
+      function savedRunCost(run) {
+        const value = Number(run.price ?? run.cost_estimate?.estimated_cost_usd ?? 0);
+        return value ? `$${value.toFixed(6)}` : "$0";
+      }
+
+      function formatRunDate(value) {
+        const date = new Date(value || "");
+        if (Number.isNaN(date.getTime())) return "n/a";
+        return date.toLocaleString([], {
+          month: "short",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
+
+      async function openSavedRun(runId, mode) {
+        const run = await getJson(`/api/workflows/complete-assessment/runs/${encodeURIComponent(runId)}`);
+        if (mode === "json") {
+          openTextWindow(`Saved run JSON - ${runId}`, JSON.stringify(run, null, 2));
+          return;
+        }
+        openTextWindow(`Saved run summary - ${runId}`, savedRunSummary(run));
+      }
+
+      function savedRunSummary(run) {
+        const result = run.final_result || {};
+        const summary = result.management_summary || result.summary || "";
+        const exposure = result.risk_exposure || "";
+        const conclusion = result.conclusion || "";
+        const lines = [
+          `Run: ${run.run_id}`,
+          `Created: ${run.created_at || "n/a"}`,
+          `Model: ${run.provider || "n/a"}:${run.model || "n/a"}`,
+          `Assessment: ${run.assessment_id || "n/a"} / Vendor: ${run.vendor_id || "n/a"}`,
+          `Cost: ${savedRunCost(run)}`,
+          `Duration: ${formatDuration(run.duration_seconds)}`,
+          "",
+          "Management summary:",
+          summary || "[No management summary stored in this run.]",
+          "",
+          "Risk exposure:",
+          exposure || "[No risk exposure paragraph stored in this run.]",
+          "",
+          "Conclusion:",
+          conclusion || "[No conclusion paragraph stored in this run.]",
+        ];
+        return lines.join("\n");
       }
 
       function setBusy(busy, text) {
