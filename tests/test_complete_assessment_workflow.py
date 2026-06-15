@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import time
 from pathlib import Path
@@ -21,16 +22,31 @@ from secure_rag.embeddings import HashEmbeddingClient
 class WorkflowFakeChatModel:
     def chat(self, messages: list[dict[str, str]]) -> str:
         joined = "\n".join(message["content"] for message in messages)
-        if "Write only paragraph text" in joined:
-            return """
-            {
-              "management_summary": "Acme Hosting has malware and recovery gaps that need review.",
-              "introduction": "This draft summarizes the vendor assessment for a business owner.",
-              "objective": "The objective is to explain risk from tier and questionnaire evidence.",
-              "risk_exposure": "Exposure is driven by endpoint and recovery gaps.",
-              "conclusion": "The assessment should remain a draft until analyst review."
-            }
-            """
+        if "business-facing TPRM report writer" in joined:
+            return json.dumps(
+                {
+                    "management_summary": (
+                        "Acme SaaS is a Tier 2 vendor with endpoint malware and "
+                        "recovery testing gaps that need analyst review."
+                    ),
+                    "introduction": (
+                        "This draft summarizes Acme SaaS's vendor assessment for a "
+                        "business owner."
+                    ),
+                    "objective": (
+                        "The objective is to explain Tier 2 risk from validated "
+                        "questionnaire and standards evidence."
+                    ),
+                    "risk_exposure": (
+                        "Acme SaaS exposure is driven by missing endpoint anti-malware "
+                        "controls and untested recovery capability."
+                    ),
+                    "conclusion": (
+                        "Acme SaaS should remain a draft assessment until the endpoint "
+                        "and recovery gaps are reviewed."
+                    ),
+                }
+            )
         return """
         {
           "executive_summary": "The weakness increases malware and ransomware exposure.",
@@ -68,6 +84,30 @@ class SlowWorkflowFakeChatModel(WorkflowFakeChatModel):
 class HugeWorkflowFakeChatModel(WorkflowFakeChatModel):
     def chat(self, messages: list[dict[str, str]]) -> str:
         return "x" * 120_000
+
+
+class BadFinalParagraphFakeChatModel(WorkflowFakeChatModel):
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        joined = "\n".join(message["content"] for message in messages)
+        if "business-facing TPRM report writer" in joined:
+            return "The provided JSON is invalid. Here are the key issues and next steps."
+        return super().chat(messages)
+
+
+class BadRiskAnswerFakeChatModel(WorkflowFakeChatModel):
+    def chat(self, messages: list[dict[str, str]]) -> str:
+        if "structured risk answer" in "\n".join(message["content"] for message in messages):
+            return """
+            {
+              "executive_summary": "Bad output.",
+              "threats": [],
+              "vulnerabilities": [],
+              "risks": [],
+              "recommended_controls": [],
+              "risk_control_matrix": []
+            }
+            """
+        return super().chat(messages)
 
 
 def test_complete_assessment_workflow_uses_adapter_rag_and_persists_run(
@@ -313,6 +353,38 @@ def test_complete_assessment_token_budget_can_stop_oversized_model_output(
     assert "Token budget guard" in response.json()["detail"]
 
 
+def test_complete_assessment_fails_visible_quality_gate_for_bad_final_paragraphs(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        complete_assessment,
+        "_chat_model",
+        lambda *args, **kwargs: BadFinalParagraphFakeChatModel(),
+    )
+    pipeline = _memory_pipeline(tmp_path, BadFinalParagraphFakeChatModel())
+    pipeline.ingest(_standards_fixture(tmp_path), chunk_size=300)
+    client = TestClient(create_app(pipeline))
+
+    response = client.post(
+        "/api/workflows/complete-assessment/run",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {"provider": "ollama", "model": "qwen3:14b"},
+            "top_k": 5,
+        },
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Quality gate failed" in detail
+    assert "Operator fix" in detail
+    assert "System fix" in detail
+
+
 def test_complete_assessment_job_endpoint_runs_to_completion(
     tmp_path: Path,
     monkeypatch: Any,
@@ -345,6 +417,45 @@ def test_complete_assessment_job_endpoint_runs_to_completion(
     assert final["current_step"] == "Finished"
     assert final["partial_steps"]
     assert final["result"]["steps"][0]["name"] == "Read assessment input"
+
+
+def test_complete_assessment_job_reports_quality_gate_failure_step(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        complete_assessment,
+        "_chat_model",
+        lambda *args, **kwargs: BadRiskAnswerFakeChatModel(),
+    )
+    pipeline = _memory_pipeline(tmp_path, BadRiskAnswerFakeChatModel())
+    pipeline.ingest(_standards_fixture(tmp_path), chunk_size=300)
+    client = TestClient(create_app(pipeline))
+
+    start = client.post(
+        "/api/workflows/complete-assessment/jobs",
+        json={
+            "input_source": {
+                "adapter": "foundation_packet_v1",
+                "payload": sample_foundation_packet().model_dump(mode="json"),
+            },
+            "model": {"provider": "ollama", "model": "qwen3:14b"},
+            "top_k": 5,
+        },
+    )
+
+    assert start.status_code == 200
+    final = _wait_for_job(client, start.json()["job_id"])
+    assert final["status"] == "failed"
+    assert "Quality gate failed" in final["error"]
+    failed_steps = [
+        step for step in final["partial_steps"] if "Quality gate failed" in step["name"]
+    ]
+    assert failed_steps
+    gate = failed_steps[-1]["output"]["quality_gate"]
+    assert gate["passed"] is False
+    assert gate["issues"][0]["operator_fix"]
+    assert gate["issues"][0]["system_fix"]
 
 
 def test_complete_assessment_job_cancel_requests_ollama_stop(

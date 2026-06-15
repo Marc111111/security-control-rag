@@ -8,12 +8,19 @@ from app.schemas import GraphRagAnswer, MatrixRow, RetrievedEvidence, Structured
 
 def parse_structured_answer(raw: str, evidence: list[RetrievedEvidence]) -> StructuredRiskAnswer:
     try:
-        data = json.loads(_extract_json(raw))
-        data = _normalize_model_json(data, evidence)
-        answer = StructuredRiskAnswer.model_validate(data)
-        return augment_answer_with_evidence_controls(answer, evidence)
+        return parse_structured_answer_strict(raw, evidence)
     except Exception:
         return fallback_answer(raw, evidence)
+
+
+def parse_structured_answer_strict(
+    raw: str,
+    evidence: list[RetrievedEvidence],
+) -> StructuredRiskAnswer:
+    data = json.loads(_extract_json(raw))
+    data = _normalize_model_json(data, evidence)
+    answer = StructuredRiskAnswer.model_validate(data)
+    return augment_answer_with_evidence_controls(answer, evidence)
 
 
 def fallback_answer(raw: str, evidence: list[RetrievedEvidence]) -> StructuredRiskAnswer:

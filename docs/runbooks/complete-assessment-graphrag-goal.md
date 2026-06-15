@@ -168,7 +168,13 @@ http://127.0.0.1:8000/mock/foundation
 - Run persistence: implemented.
 - Unit tests for complete workflow and parser normalization: implemented.
 - Quality-gate design documentation: completed in `docs/quality-gates.md`.
-- Runtime quality-gate implementation: not yet implemented.
+- Runtime quality-gate implementation: implemented for risk-answer model calls and final
+  paragraph model calls. Gates validate prompt contracts, schema/content/evidence quality, and
+  final report consistency; failed gates retry and then fail visibly.
+- Browser failure modal: implemented for workflow/preflight/job failures with operator and
+  system-owner remediation guidance.
+- Generation temperature: set to `0` for OpenAI and Ollama clients to reduce variation between
+  identical inputs.
 - Third-party service folders under `third_party/`: configured in Docker Compose.
 - Standards ingestion into Qdrant/BM25/Neo4j: completed.
 - Store counts after clean ingestion:
@@ -219,10 +225,14 @@ implementation work:
 - build a deterministic validated fact packet before final paragraph generation,
 - remove or quarantine silent fallback behavior from final report generation.
 
+These items are now implemented for the complete-assessment risk-answer and final-paragraph LLM
+calls. Remaining expansion work is to apply the same gate pattern to any other future LLM-powered
+workflow and to improve the semantic validators as real analyst feedback accumulates.
+
 ## Known Risks And Improvements
 
-- LLM output validation is currently insufficient. `docs/quality-gates.md` is the required design
-  for the next implementation pass.
+- LLM output validation now exists for the complete-assessment risk-answer and final-paragraph
+  calls. Continue improving semantic checks as new failure modes are observed.
 - The graph extractor is heuristic. It is useful for a prototype but should later be replaced or
   supplemented by a stronger controlled extractor with confidence scoring.
 - BM25 persistence appends chunks. Re-ingestion should clear or version the keyword index to avoid

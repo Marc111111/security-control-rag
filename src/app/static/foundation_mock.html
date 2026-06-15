@@ -212,6 +212,41 @@
         margin-right: 3px;
       }
       .estimate-line .sep { color: #9aa8a3; }
+      .failure-modal {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(29, 39, 48, .42);
+      }
+      .failure-modal.open { display: flex; }
+      .failure-box {
+        width: min(760px, 96vw);
+        max-height: 84vh;
+        overflow: auto;
+        background: #fff;
+        border: 1px solid #d9b8a3;
+        border-radius: 8px;
+        box-shadow: 0 18px 60px rgba(29, 39, 48, .24);
+      }
+      .failure-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #ead6ca;
+        background: #fff7ed;
+      }
+      .failure-head strong { color: #8a3b0b; }
+      .failure-body { padding: 14px; font-size: 13px; line-height: 1.45; }
+      .failure-body h3 { margin: 12px 0 6px; font-size: 13px; }
+      .failure-body p { margin: 0 0 8px; }
+      .failure-body ul { margin: 0 0 10px 20px; padding: 0; }
+      .failure-body code { background: var(--soft); padding: 1px 4px; border-radius: 4px; }
       .estimate-note {
         margin-top: 4px;
         color: var(--muted);
@@ -528,6 +563,15 @@
         </div>
       </section>
     </main>
+    <div class="failure-modal" id="failureModal" role="dialog" aria-modal="true" aria-labelledby="failureTitle">
+      <div class="failure-box">
+        <div class="failure-head">
+          <strong id="failureTitle">Workflow failed quality checks</strong>
+          <button class="secondary small" id="closeFailure" type="button">Close</button>
+        </div>
+        <div class="failure-body" id="failureBody"></div>
+      </div>
+    </div>
     <script>
       const models = {
         ollama: ["qwen3:14b", "gemma3:4b"],
@@ -549,6 +593,9 @@
       const metricsEl = document.querySelector("#metrics");
       const statusEl = document.querySelector("#status");
       const dbFormEl = document.querySelector("#dbForm");
+      const failureModalEl = document.querySelector("#failureModal");
+      const failureBodyEl = document.querySelector("#failureBody");
+      const closeFailureEl = document.querySelector("#closeFailure");
       const savedScenarioKey = "foundationMock.savedDbScenario";
       let sample = null;
       let currentJobId = null;
@@ -759,6 +806,12 @@
           startPolling();
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          showFailureModal({
+            title: "Workflow could not start",
+            message: error.message,
+            operatorFixes: ["Review the configuration and input values, then run the workflow again."],
+            systemFixes: ["If this repeats for valid input, inspect the preflight and request validation logic."]
+          });
           currentJobId = null;
           stopPolling();
           setBusy(false);
@@ -830,10 +883,17 @@
               statusEl.textContent = `Cancelled ${job.job_id}`;
             } else {
               statusEl.innerHTML = `<span class="warning">${escapeHtml(job.error || "Workflow failed")}</span>`;
+              showFailureModal(failureDetails(job));
             }
           }
         } catch (error) {
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
+          showFailureModal({
+            title: "Workflow status check failed",
+            message: error.message,
+            operatorFixes: ["Check that the local API server is still running, then refresh the page."],
+            systemFixes: ["Inspect API logs if polling fails repeatedly while the server is up."]
+          });
           stopPolling();
           setBusy(false);
         }
@@ -897,6 +957,44 @@
           const partialSteps = (job.partial_steps || []).map((step, index) => renderStep(step, index)).join("");
           setWorkflowHtml(`${lastPreflight ? renderPreflightStep(lastPreflight) : ""}${partialSteps}${renderJobStep(job, (job.partial_steps || []).length + 1)}`);
         }
+      }
+
+      function failureDetails(job) {
+        const gateStep = [...(job.partial_steps || [])].reverse().find((step) =>
+          String(step.name || "").toLowerCase().includes("quality gate failed")
+        );
+        const gate = gateStep?.output?.quality_gate;
+        const issues = gate?.issues || [];
+        return {
+          title: gate ? "Workflow failed a quality gate" : "Workflow failed",
+          message: gate?.summary || job.error || "The workflow stopped before producing a valid result.",
+          failedStep: gateStep?.name || job.current_step,
+          operatorFixes: issues.map((issue) => issue.operator_fix).filter(Boolean),
+          systemFixes: issues.map((issue) => issue.system_fix).filter(Boolean),
+          issues,
+          rawError: job.error,
+        };
+      }
+
+      function showFailureModal(details) {
+        const uniqueOperator = [...new Set(details.operatorFixes || [])];
+        const uniqueSystem = [...new Set(details.systemFixes || [])];
+        const issues = details.issues || [];
+        failureBodyEl.innerHTML = `
+          <p><strong>${escapeHtml(details.message || "The workflow failed.")}</strong></p>
+          ${details.failedStep ? `<p>Failed step: <code>${escapeHtml(details.failedStep)}</code></p>` : ""}
+          ${details.rawError ? `<p>Raw error: ${escapeHtml(details.rawError)}</p>` : ""}
+          ${issues.length ? `<h3>What went wrong</h3><ul>${issues.map((issue) => `<li><strong>${escapeHtml(issue.field || "output")}</strong>: ${escapeHtml(issue.message || "Validation failed.")}</li>`).join("")}</ul>` : ""}
+          <h3>Operator action</h3>
+          <ul>${(uniqueOperator.length ? uniqueOperator : ["Do not approve this run. Review the failed workflow step and retry after correcting the input or source evidence."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+          <h3>System owner action</h3>
+          <ul>${(uniqueSystem.length ? uniqueSystem : ["Inspect the failed quality gate and adjust the workflow design, prompt, retrieval, or validator before relying on this output."]).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+        `;
+        failureModalEl.classList.add("open");
+      }
+
+      function closeFailureModal() {
+        failureModalEl.classList.remove("open");
       }
 
       function renderJobStep(job, number) {
@@ -1279,6 +1377,10 @@
       document.querySelector("#cancel").addEventListener("click", cancelWorkflow);
       expandFinalEl.addEventListener("click", expandFinalResult);
       codexReviewEl.addEventListener("click", openCodexReviewPacket);
+      closeFailureEl.addEventListener("click", closeFailureModal);
+      failureModalEl.addEventListener("click", (event) => {
+        if (event.target === failureModalEl) closeFailureModal();
+      });
       document.querySelector("#reset").addEventListener("click", () => {
         packetEl.value = JSON.stringify(sample, null, 2);
         window.localStorage.removeItem(savedScenarioKey);

@@ -15,11 +15,19 @@ from app.assessment.findings import classify_findings, sanitize_packet
 from app.assessment.schemas import (
     AssessmentFinding,
     FoundationAssessmentPacket,
-    FoundationSummaryDraft,
 )
 from app.assessment.token_estimator import MODEL_PRICES_PER_MILLION, USD_TO_EUR_RATE
 from app.generation.clients import ChatModel, OpenAIChatClient
 from app.pipeline import GraphRagPipeline
+from app.quality_gates import (
+    GateIssue,
+    QualityGateFailure,
+    failed_gate,
+    human_failure_message,
+    repair_prompt,
+    validate_final_paragraphs,
+    validate_prompt_contract,
+)
 from app.schemas import GraphRagAnswer
 from app.workflows.run_store import WorkflowRunStore
 from secure_rag.llm import OllamaChatClient
@@ -370,10 +378,12 @@ class CompleteAssessmentWorkflow:
                     token_usage_callback=record_model_call,
                     token_budget_guard=assert_model_call_budget,
                     status_callback=set_status,
+                    trace_step_callback=lambda trace_step: add_step(
+                        WorkflowStep(**trace_step)
+                    ),
                 )
                 for trace_step in trace_steps:
                     _raise_if_cancelled(cancel_event)
-                    add_step(WorkflowStep(**trace_step))
                     risk_chain_output = trace_step["output"]
                 rag_answers.append(answer)
                 stored_answer_output = {
@@ -422,12 +432,65 @@ class CompleteAssessmentWorkflow:
             )
 
             _raise_if_cancelled(cancel_event)
-            cost_estimate = _cost_estimate_from_preflight(request.model, preflight)
-            paragraph_messages = _paragraph_prompt(
+            validated_fact_packet = _validated_fact_packet(
                 sanitized,
                 findings,
                 compact_risk_evidence,
             )
+            add_step(
+                WorkflowStep(
+                    name="Build validated fact packet for report drafting",
+                    explanation=(
+                        "Creates the clean facts that the final report writer is allowed to use."
+                    ),
+                    tool="Python deterministic workflow + quality gate",
+                    input=rag_evidence_output,
+                    process=(
+                        "We remove raw debug material and keep only vendor context, tier context, "
+                        "weaknesses, validated risk facts, controls, source mappings, and missing "
+                        "information. The final model may phrase these facts but may not invent "
+                        "new facts."
+                    ),
+                    output=validated_fact_packet,
+                )
+            )
+
+            _raise_if_cancelled(cancel_event)
+            cost_estimate = _cost_estimate_from_preflight(request.model, preflight)
+            paragraph_messages = _paragraph_prompt(
+                validated_fact_packet,
+            )
+            paragraph_prompt_gate = validate_prompt_contract(
+                gate="final_paragraph_prompt",
+                messages=paragraph_messages,
+                required_phrases=[
+                    "Role:",
+                    "Objective:",
+                    "Trusted fact boundary:",
+                    "Forbidden behavior:",
+                    "Output contract:",
+                    "Do not repair JSON",
+                ],
+                task_name="final paragraph",
+            )
+            if not paragraph_prompt_gate.passed:
+                add_step(
+                    WorkflowStep(
+                        name="Quality gate failed for final paragraph prompt",
+                        explanation=(
+                            "Stops before calling the report model because the prompt is "
+                            "incomplete."
+                        ),
+                        tool="Python quality gate",
+                        input={"messages_sent_to_model": paragraph_messages},
+                        process=(
+                            "We check that the prompt explains the model role, task, trusted "
+                            "fact boundary, forbidden behavior, and output contract."
+                        ),
+                        output=paragraph_prompt_gate.as_dict(),
+                    )
+                )
+                raise QualityGateFailure(paragraph_prompt_gate)
             paragraph_input_tokens = _rough_tokens(
                 json.dumps(paragraph_messages, ensure_ascii=True)
             )
@@ -441,22 +504,114 @@ class CompleteAssessmentWorkflow:
                 paragraph_input_tokens,
             )
             paragraph_input = {
-                "evidence_package_from_previous_step": rag_evidence_output,
+                "validated_fact_packet_from_previous_step": validated_fact_packet,
                 "messages_sent_to_model": paragraph_messages,
+                "quality_gate": paragraph_prompt_gate.as_dict(),
                 "api_key": "[hidden]",
             }
             _raise_if_cancelled(cancel_event)
-            set_status("Waiting for model to draft report paragraphs")
-            raw_paragraphs = selected_chat_model.chat(paragraph_messages)
-            set_status("Parsing model-drafted report paragraphs")
-            paragraph_token_usage = record_model_call(
-                "Report paragraph model call",
-                paragraph_messages,
-                raw_paragraphs,
-                selected_chat_model,
-            )
+            paragraph_attempts: list[dict[str, Any]] = []
+            paragraph_gate = None
+            paragraph_token_usage = None
+            paragraphs: dict[str, str] | None = None
+            raw_paragraphs = ""
+            current_paragraph_messages = paragraph_messages
+            for attempt in range(1, 4):
+                call_name = (
+                    "Report paragraph model call"
+                    if attempt == 1
+                    else f"Report paragraph model call repair attempt {attempt}"
+                )
+                token_tracker.assert_can_send(
+                    call_name,
+                    _rough_tokens(json.dumps(current_paragraph_messages, ensure_ascii=True)),
+                )
+                set_status(f"Waiting for model to draft report paragraphs (attempt {attempt})")
+                raw_paragraphs = selected_chat_model.chat(current_paragraph_messages)
+                set_status(f"Validating model-drafted report paragraphs (attempt {attempt})")
+                paragraph_token_usage = record_model_call(
+                    call_name,
+                    current_paragraph_messages,
+                    raw_paragraphs,
+                    selected_chat_model,
+                )
+                try:
+                    paragraphs = _parse_paragraphs_strict(raw_paragraphs)
+                    paragraph_gate = validate_final_paragraphs(
+                        paragraphs=paragraphs,
+                        raw_model_output=raw_paragraphs,
+                        vendor_name=sanitized.vendor.name,
+                        tier_level=sanitized.tier.level,
+                        weakness_summaries=[
+                            finding.summary for finding in findings["weaknesses"]
+                        ],
+                        validated_facts=validated_fact_packet,
+                    )
+                except Exception as exc:
+                    paragraph_gate = failed_gate(
+                        "final_paragraph_output",
+                        "Final report paragraphs could not be parsed as the required JSON.",
+                        [
+                            GateIssue(
+                                field="raw_model_output",
+                                message=str(exc),
+                                operator_fix=(
+                                    "Do not approve this report. The model did not return the "
+                                    "required paragraph contract."
+                                ),
+                                system_fix=(
+                                    "Retry with the repair prompt, reduce prompt size, or use a "
+                                    "stronger model."
+                                ),
+                            )
+                        ],
+                    )
+                paragraph_attempts.append(
+                    {
+                        "attempt": attempt,
+                        "raw_model_output": raw_paragraphs,
+                        "parsed_paragraphs": paragraphs,
+                        "token_usage": paragraph_token_usage,
+                        "quality_gate": paragraph_gate.as_dict(),
+                    }
+                )
+                if paragraph_gate.passed and paragraphs is not None:
+                    break
+                if attempt < 3:
+                    current_paragraph_messages = repair_prompt(
+                        original_messages=paragraph_messages,
+                        gate_result=paragraph_gate,
+                    )
             _raise_if_cancelled(cancel_event)
-            paragraphs = _parse_paragraphs(raw_paragraphs, sanitized, findings)
+            if paragraph_gate is None or not paragraph_gate.passed or paragraphs is None:
+                add_step(
+                    WorkflowStep(
+                        name="Quality gate failed for final report paragraphs",
+                        explanation=(
+                            "Stops because the report model did not produce trustworthy "
+                            "business paragraphs after repair retries."
+                        ),
+                        tool="Python quality gate",
+                        input=paragraph_input,
+                        process=(
+                            "We validate the final report text for required fields, vendor/tier "
+                            "context, validated risk facts, and forbidden JSON-repair behavior. "
+                            "The workflow stops instead of showing generic fallback text."
+                        ),
+                        output={
+                            "attempts": paragraph_attempts,
+                            "quality_gate": paragraph_gate.as_dict()
+                            if paragraph_gate
+                            else None,
+                            "human_explanation": human_failure_message(paragraph_gate)
+                            if paragraph_gate
+                            else "The quality gate did not produce a result.",
+                        },
+                    )
+                )
+                raise QualityGateFailure(paragraph_gate) if paragraph_gate else RuntimeError(
+                    "Final paragraph quality gate failed without a gate result."
+                )
             add_step(
                 WorkflowStep(
                     name="Ask model to draft report paragraphs",
@@ -474,6 +629,8 @@ class CompleteAssessmentWorkflow:
                     output={
                         "raw_model_output": raw_paragraphs,
                         "parsed_paragraphs": paragraphs,
+                        "attempts": paragraph_attempts,
+                        "quality_gate": paragraph_gate.as_dict(),
                         "token_usage": paragraph_token_usage,
                     },
                 )
@@ -711,41 +868,48 @@ def _risk_queries(
 
 
 def _paragraph_prompt(
-    packet: Any,
-    findings: dict[str, list[AssessmentFinding]],
-    rag_answers: list[dict[str, Any]],
+    validated_fact_packet: dict[str, Any],
 ) -> list[dict[str, str]]:
     return [
         {
             "role": "system",
             "content": (
-                "You draft business-facing TPRM assessment paragraphs. Use only the supplied "
-                "assessment data and retrieved standards evidence. Do not invent citations, "
-                "controls, certifications, or facts. Return valid JSON with exactly the "
-                "requested keys."
+                "Role:\n"
+                "You are a business-facing TPRM report writer.\n\n"
+                "Objective:\n"
+                "Turn the validated fact packet into concise report paragraphs for a "
+                "business owner.\n\n"
+                "Trusted fact boundary:\n"
+                "Use only the supplied validated fact packet. The risk analysis has already been "
+                "performed and validated. Do not add new risks, controls, citations, evidence, "
+                "certifications, or assumptions.\n\n"
+                "Forbidden behavior:\n"
+                "- Do not repair JSON.\n"
+                "- Do not critique the input.\n"
+                "- Do not re-analyze the standards evidence.\n"
+                "- Do not include markdown.\n"
+                "- Do not invent facts outside the validated fact packet.\n\n"
+                "Output contract:\n"
+                "Return only valid JSON with exactly these keys: management_summary, "
+                "introduction, objective, risk_exposure, conclusion."
             ),
         },
         {
             "role": "user",
-            "content": json.dumps(
-                {
-                    "task": (
-                        "Write only paragraph text. Do not decide schema, scores, "
-                        "findings, or persistence."
-                    ),
-                    "required_keys": [
-                        "management_summary",
-                        "introduction",
-                        "objective",
-                        "risk_exposure",
-                        "conclusion",
-                    ],
-                    "assessment": packet.model_dump(mode="json"),
-                    "findings": _findings_dump(findings),
-                    "retrieved_risk_evidence": rag_answers,
-                },
-                ensure_ascii=True,
-                indent=2,
+            "content": (
+                "Task:\n"
+                "Write only the five requested paragraph values. Each paragraph must be "
+                "business-readable and grounded in the validated facts.\n\n"
+                "Required output JSON:\n"
+                "{\n"
+                '  "management_summary": "",\n'
+                '  "introduction": "",\n'
+                '  "objective": "",\n'
+                '  "risk_exposure": "",\n'
+                '  "conclusion": ""\n'
+                "}\n\n"
+                "Validated fact packet:\n"
+                f"{json.dumps(validated_fact_packet, ensure_ascii=True, indent=2)}"
             ),
         },
     ]
@@ -849,29 +1013,60 @@ def _conservative_preflight_input_breakdown(
     }
 
 
-def _parse_paragraphs(
-    raw: str,
-    packet: Any,
-    findings: dict[str, list[AssessmentFinding]],
-) -> dict[str, str]:
-    try:
-        data = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])
-    except Exception:
-        data = {}
-    fallback = FoundationSummaryDraft(
-        management_summary=(
-            f"{packet.vendor.name} is a Tier {packet.tier.level} vendor with "
-            f"{len(findings['weaknesses'])} control weaknesses requiring review."
-        ),
-        introduction=f"This assessment summarizes {packet.vendor.name}'s vendor risk posture.",
-        objective="The objective is to support analyst review and business-owner decision making.",
-        risk_exposure=(
-            "Risk exposure is driven by weak questionnaire responses and retrieved evidence."
-        ),
-        conclusion="The result should be reviewed before snapshot approval.",
-    ).model_dump()
+def _parse_paragraphs_strict(raw: str) -> dict[str, str]:
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("Model output did not contain a JSON object.")
+    data = json.loads(raw[start : end + 1])
+    if not isinstance(data, dict):
+        raise ValueError("Model output JSON is not an object.")
     keys = ["management_summary", "introduction", "objective", "risk_exposure", "conclusion"]
-    return {key: str(data.get(key) or fallback[key]) for key in keys}
+    missing = [key for key in keys if not isinstance(data.get(key), str) or not data[key].strip()]
+    if missing:
+        raise ValueError(f"Model output is missing required paragraph fields: {missing}")
+    return {key: str(data[key]).strip() for key in keys}
+
+
+def _validated_fact_packet(
+    packet: FoundationAssessmentPacket,
+    findings: dict[str, list[AssessmentFinding]],
+    rag_answers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    validated_risk_facts: list[dict[str, Any]] = []
+    for answer in rag_answers:
+        risk_answer = answer.get("answer") or {}
+        validated_risk_facts.append(
+            {
+                "executive_summary": risk_answer.get("executive_summary"),
+                "threats": risk_answer.get("threats") or [],
+                "vulnerabilities": risk_answer.get("vulnerabilities") or [],
+                "risks": risk_answer.get("risks") or [],
+                "recommended_controls": risk_answer.get("recommended_controls") or [],
+                "risk_control_matrix": risk_answer.get("risk_control_matrix") or [],
+                "missing_information": risk_answer.get("missing_information") or [],
+                "sources": answer.get("sources") or [],
+                "insufficient_evidence": answer.get("insufficient_evidence", False),
+            }
+        )
+    return {
+        "vendor": {
+            "vendor_id": packet.vendor.vendor_id,
+            "name": packet.vendor.name,
+            "vendor_type": packet.vendor.vendor_type,
+            "business_relationship": packet.vendor.business_relationship,
+            "services": packet.vendor.services,
+        },
+        "tier": packet.tier.model_dump(mode="json"),
+        "strengths": [finding.model_dump(mode="json") for finding in findings["strengths"]],
+        "weaknesses": [finding.model_dump(mode="json") for finding in findings["weaknesses"]],
+        "validated_risk_facts": validated_risk_facts,
+        "reporting_rules": {
+            "do_not_invent_new_facts": True,
+            "draft_status": "analyst_review_required",
+            "source": "deterministic_packet_from_validated_workflow_steps",
+        },
+    }
 
 
 def _final_result(

@@ -23,7 +23,7 @@ class OllamaChatClient:
         model: str = "qwen3:14b",
         base_url: str = "http://localhost:11434",
         timeout: float = 600.0,
-        temperature: float = 0.1,
+        temperature: float = 0,
         keep_alive: str | None = None,
         cancel_event: threading.Event | None = None,
     ) -> None:

@@ -29,6 +29,9 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Open Codex review packet" in response.text
     assert "buildCodexReviewPacket" in response.text
     assert "Development-only independent quality review" in response.text
+    assert "failureModal" in response.text
+    assert "Operator action" in response.text
+    assert "System owner action" in response.text
     assert "Execution Workflow" in response.text
     assert "No run yet" in response.text
     assert "Simulated SQL Result JSON" in response.text

@@ -35,7 +35,7 @@ class OpenAIChatClient:
             response_kwargs: dict[str, object] = {
                 "model": self.model,
                 "input": messages,
-                "temperature": 0.1,
+                "temperature": 0,
             }
             if self.max_output_tokens is not None:
                 response_kwargs["max_output_tokens"] = self.max_output_tokens
@@ -51,7 +51,7 @@ class OpenAIChatClient:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
-            temperature=0.1,
+            temperature=0,
             **kwargs,
         )
         self.last_usage = _usage_from_openai_response(response)

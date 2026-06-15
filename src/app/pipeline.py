@@ -10,11 +10,23 @@ from app.config import Settings
 from app.evaluation.logger import EvaluationLogger
 from app.generation.clients import ChatModel, chat_client_for_provider
 from app.generation.prompts import build_structured_answer_prompt
-from app.generation.structured import insufficient_evidence_answer, parse_structured_answer
+from app.generation.structured import (
+    insufficient_evidence_answer,
+    parse_structured_answer_strict,
+)
 from app.graph.extractor import HeuristicGraphExtractor
 from app.graph.store import GraphStore, MemoryGraphStore, Neo4jGraphStore
 from app.ingestion.chunker import load_and_chunk_path
 from app.planning.planner import RiskQuestionPlanner
+from app.quality_gates import (
+    GateIssue,
+    QualityGateFailure,
+    failed_gate,
+    human_failure_message,
+    repair_prompt,
+    validate_prompt_contract,
+    validate_risk_answer,
+)
 from app.retrieval.bm25 import KeywordIndex
 from app.retrieval.hybrid import HybridRetriever
 from app.retrieval.vector_store import DenseStore, MemoryDenseStore, QdrantDenseStore
@@ -117,8 +129,16 @@ class GraphRagPipeline:
         | None = None,
         token_budget_guard: Callable[[str, list[dict[str, str]]], None] | None = None,
         status_callback: Callable[[str], None] | None = None,
+        trace_step_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> tuple[GraphRagAnswer, list[dict[str, Any]]]:
         full_question = _merge_question_context(question, context)
+        trace_steps: list[dict[str, Any]] = []
+
+        def add_trace_step(step: dict[str, Any]) -> None:
+            trace_steps.append(step)
+            if trace_step_callback is not None:
+                trace_step_callback(step)
+
         if status_callback is not None:
             status_callback(f"Planning standards searches for {trace_label}")
         plan = self.planner.plan(full_question)
@@ -128,7 +148,7 @@ class GraphRagPipeline:
             "search_plan": plan.model_dump(),
             "top_k": effective_top_k,
         }
-        trace_steps: list[dict[str, Any]] = [
+        add_trace_step(
             {
                 "name": f"Plan searches for {trace_label}",
                 "explanation": (
@@ -143,7 +163,7 @@ class GraphRagPipeline:
                 ),
                 "output": plan_output,
             }
-        ]
+        )
         if status_callback is not None:
             status_callback(f"Searching standards evidence for {trace_label}")
         evidence, graph_rows = self._retriever().retrieve(
@@ -155,7 +175,7 @@ class GraphRagPipeline:
             "retrieved_chunks": retrieved_chunks,
             "graph_rows": graph_rows,
         }
-        trace_steps.append(
+        add_trace_step(
             {
                 "name": f"Search standards evidence for {trace_label}",
                 "explanation": (
@@ -174,7 +194,7 @@ class GraphRagPipeline:
         )
         if not evidence:
             answer = insufficient_evidence_answer()
-            trace_steps.append(
+            add_trace_step(
                 {
                     "name": f"Handle missing evidence for {trace_label}",
                     "explanation": (
@@ -194,11 +214,42 @@ class GraphRagPipeline:
         if status_callback is not None:
             status_callback(f"Preparing model prompt for {trace_label}")
         messages = build_structured_answer_prompt(full_question, plan, evidence, graph_rows)
+        prompt_gate = validate_prompt_contract(
+            gate="risk_answer_prompt",
+            messages=messages,
+            required_phrases=[
+                "Role:",
+                "Objective:",
+                "Trusted evidence boundary:",
+                "Forbidden behavior:",
+                "Output contract:",
+                "Do not use general training knowledge",
+            ],
+            task_name="risk answer",
+        )
+        if not prompt_gate.passed:
+            add_trace_step(
+                {
+                    "name": f"Quality gate failed for risk prompt {trace_label}",
+                    "explanation": (
+                        "Stops before calling the model because the prompt is incomplete."
+                    ),
+                    "tool": "Python quality gate",
+                    "input": {"messages_sent_to_model": messages},
+                    "process": (
+                        "We check the generated prompt for the role, task, trusted evidence "
+                        "boundary, forbidden behavior, output contract, and failure rules."
+                    ),
+                    "output": prompt_gate.as_dict(),
+                }
+            )
+            raise QualityGateFailure(prompt_gate)
         prompt_output = {
             "messages_sent_to_model": messages,
             "retrieved_evidence": retrieval_output,
+            "quality_gate": prompt_gate.as_dict(),
         }
-        trace_steps.append(
+        add_trace_step(
             {
                 "name": f"Prepare model prompt for {trace_label}",
                 "explanation": (
@@ -216,24 +267,105 @@ class GraphRagPipeline:
             }
         )
         call_name = f"Risk answer model call for {trace_label}"
-        if token_budget_guard is not None:
-            token_budget_guard(call_name, messages)
-        if status_callback is not None:
-            status_callback(f"Waiting for model risk answer for {trace_label}")
-        raw = self.chat_model.chat(messages)
-        if status_callback is not None:
-            status_callback(f"Parsing model risk answer for {trace_label}")
-        token_usage = (
-            token_usage_callback(
-                call_name,
-                messages,
-                raw,
-                self.chat_model,
+        attempts: list[dict[str, Any]] = []
+        current_messages = messages
+        final_gate = None
+        raw = ""
+        structured = None
+        token_usage = None
+        for attempt in range(1, 4):
+            attempt_name = call_name if attempt == 1 else f"{call_name} repair attempt {attempt}"
+            if token_budget_guard is not None:
+                token_budget_guard(attempt_name, current_messages)
+            if status_callback is not None:
+                status_callback(
+                    f"Waiting for model risk answer for {trace_label} "
+                    f"(attempt {attempt})"
+                )
+            raw = self.chat_model.chat(current_messages)
+            if status_callback is not None:
+                status_callback(
+                    f"Validating model risk answer for {trace_label} "
+                    f"(attempt {attempt})"
+                )
+            token_usage = (
+                token_usage_callback(
+                    attempt_name,
+                    current_messages,
+                    raw,
+                    self.chat_model,
+                )
+                if token_usage_callback is not None
+                else None
             )
-            if token_usage_callback is not None
-            else None
-        )
-        structured = parse_structured_answer(raw, evidence)
+            try:
+                structured = parse_structured_answer_strict(raw, evidence)
+                final_gate = validate_risk_answer(
+                    answer=structured,
+                    evidence=evidence,
+                    raw_model_output=raw,
+                    question=full_question,
+                )
+            except Exception as exc:
+                final_gate = failed_gate(
+                    "risk_answer_output",
+                    "The model response could not be parsed as the required risk-answer JSON.",
+                    [
+                        GateIssue(
+                            field="raw_model_output",
+                            message=str(exc),
+                            operator_fix=(
+                                "Do not approve this run. The model did not produce usable "
+                                "structured risk data."
+                            ),
+                            system_fix=(
+                                "Retry with the repair prompt, reduce prompt size, or use a "
+                                "stronger model."
+                            ),
+                        )
+                    ],
+                )
+            attempts.append(
+                {
+                    "attempt": attempt,
+                    "raw_model_response": raw,
+                    "token_usage": token_usage,
+                    "quality_gate": final_gate.as_dict(),
+                }
+            )
+            if final_gate.passed and structured is not None:
+                break
+            if attempt < 3:
+                current_messages = repair_prompt(
+                    original_messages=messages,
+                    gate_result=final_gate,
+                )
+        if final_gate is None or not final_gate.passed or structured is None:
+            add_trace_step(
+                {
+                    "name": f"Quality gate failed for risk answer {trace_label}",
+                    "explanation": (
+                        "Stops because the model did not produce a trustworthy risk answer "
+                        "after repair retries."
+                    ),
+                    "tool": "Python quality gate",
+                    "input": prompt_output,
+                    "process": (
+                        "We validate schema, content, citations, and evidence support. The "
+                        "workflow stops instead of passing bad risk facts forward."
+                    ),
+                    "output": {
+                        "attempts": attempts,
+                        "quality_gate": final_gate.as_dict() if final_gate else None,
+                        "human_explanation": human_failure_message(final_gate)
+                        if final_gate
+                        else "The quality gate did not produce a result.",
+                    },
+                }
+            )
+            raise QualityGateFailure(final_gate) if final_gate else RuntimeError(
+                "Risk answer quality gate failed without a gate result."
+            )
         sources = structured.source_citations or [
             {
                 "id": f"S{index}",
@@ -248,10 +380,12 @@ class GraphRagPipeline:
             "raw_model_response": raw,
             "structured_answer": structured.model_dump(),
             "sources": sources,
+            "attempts": attempts,
+            "quality_gate": final_gate.as_dict(),
         }
         if token_usage is not None:
             model_output["token_usage"] = token_usage
-        trace_steps.append(
+        add_trace_step(
             {
                 "name": f"Ask model to write risk answer for {trace_label}",
                 "explanation": (

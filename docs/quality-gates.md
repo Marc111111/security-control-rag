@@ -11,6 +11,18 @@ the final paragraph model call returned irrelevant JSON-repair commentary and th
 replaced it with generic fallback text. That behavior is not acceptable for cybersecurity, GRC, or
 TPRM risk documentation.
 
+Implementation status as of 2026-06-15:
+
+- complete-assessment risk-answer LLM calls use prompt validation, strict parsing, output gates,
+  and bounded repair retries;
+- complete-assessment final-paragraph LLM calls use a deterministic validated fact packet,
+  prompt validation, strict parsing, output gates, and bounded repair retries;
+- failed workflow/job gates are shown in the browser through a modal with operator and system-owner
+  remediation guidance;
+- OpenAI and Ollama generation temperature defaults are set to `0` to reduce variation between
+  identical inputs;
+- future LLM-powered workflows must adopt the same gate pattern before being considered reliable.
+
 ## Non-Negotiable Rules
 
 - No silent fallback may be presented as a successful result.
