@@ -101,6 +101,20 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px;
       }
+      .config-panel .panel-header { padding: 9px 12px; }
+      .config-panel .panel-body { padding: 10px 12px 8px; overflow: hidden; }
+      .config-panel .config { gap: 7px 10px; align-items: end; }
+      .config-panel label { font-size: 11px; margin-bottom: 3px; }
+      .config-panel select,
+      .config-panel input { height: 32px; padding: 0 8px; }
+      .config-panel .check {
+        min-height: 28px;
+        margin-top: 0;
+        gap: 7px;
+        font-size: 12px;
+        align-self: end;
+      }
+      .config-panel .check input { width: 14px; height: 14px; }
       label { display: block; font-size: 12px; font-weight: 800; color: var(--muted); margin-bottom: 5px; }
       select, input {
         width: 100%;
@@ -161,8 +175,8 @@
         gap: 8px;
       }
       .estimate-panel {
-        margin-top: 14px;
-        padding-top: 12px;
+        margin-top: 9px;
+        padding-top: 8px;
         border-top: 1px solid var(--line);
       }
       .estimate-header {
@@ -170,19 +184,22 @@
         align-items: center;
         justify-content: space-between;
         gap: 10px;
-        margin-bottom: 10px;
+        margin-bottom: 7px;
       }
       .estimate-grid {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
       }
       .estimate-note {
-        margin-top: 8px;
+        margin-top: 6px;
         color: var(--muted);
-        font-size: 11px;
-        line-height: 1.4;
+        font-size: 10px;
+        line-height: 1.25;
       }
+      .estimate-grid .metric { padding: 6px 7px; }
+      .estimate-grid .metric span { font-size: 10px; margin-bottom: 2px; }
+      .estimate-grid .metric strong { font-size: 12px; }
       details.db-editor {
         border: 1px solid var(--line);
         border-radius: 8px;
@@ -394,7 +411,7 @@
     </header>
     <main>
       <section class="stack">
-        <div class="panel">
+        <div class="panel config-panel">
           <div class="panel-header"><div class="panel-title">Configuration</div></div>
           <div class="panel-body">
             <div class="config">
