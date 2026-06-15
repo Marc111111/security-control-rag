@@ -50,3 +50,32 @@ def test_ollama_chat_client_streaming_respects_cancel_event(monkeypatch: Any) ->
 
     assert captured_payload["stream"] is True
     assert captured_payload["keep_alive"] == "0s"
+    assert captured_payload["options"]["temperature"] == 0
+
+
+def test_ollama_chat_client_sends_output_token_cap(monkeypatch: Any) -> None:
+    captured_payload: dict[str, Any] = {}
+
+    class _Response:
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b'{"message":{"content":"ok"},"prompt_eval_count":1,"eval_count":1}'
+
+    def fake_urlopen(request: Any, timeout: float) -> _Response:
+        captured_payload.update(json.loads(request.data.decode("utf-8")))
+        return _Response()
+
+    monkeypatch.setattr(llm.urllib.request, "urlopen", fake_urlopen)
+    client = llm.OllamaChatClient(
+        model="qwen3:14b",
+        base_url="http://ollama.local",
+        max_output_tokens=321,
+    )
+
+    assert client.chat([{"role": "user", "content": "hello"}]) == "ok"
+    assert captured_payload["options"]["num_predict"] == 321

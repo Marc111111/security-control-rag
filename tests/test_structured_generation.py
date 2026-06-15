@@ -80,3 +80,49 @@ def test_parse_structured_answer_extracts_control_labels_from_evidence() -> None
         answer.recommended_controls
     )
     assert "CIS Controls 1" not in answer.recommended_controls
+
+
+def test_parse_structured_answer_caps_enriched_controls() -> None:
+    text = " ".join(
+        [
+            f"Safeguard 10.{index}: Control Title {index} Asset Type: Devices."
+            for index in range(1, 8)
+        ]
+    )
+    evidence = [
+        RetrievedEvidence(
+            chunk=DocumentChunk(
+                id="chunk-1",
+                text=text,
+                metadata={"source_path": "standards/cis.pdf"},
+            ),
+            score=0.9,
+            source="standards/cis.pdf",
+            retrieval_method="keyword",
+        )
+    ]
+    raw = """
+    {
+      "executive_summary": "Endpoint protection is missing.",
+      "threats": ["Malware"],
+      "vulnerabilities": ["Unprotected endpoints"],
+      "risks": ["Business disruption"],
+      "recommended_controls": [],
+      "risk_control_matrix": [
+        {
+          "gap": "No anti-malware",
+          "threat": "Malware",
+          "vulnerability": "Unprotected endpoints",
+          "risk": "Business disruption",
+          "controls": [],
+          "evidence": ["S1"]
+        }
+      ],
+      "source_citations": ["S1"]
+    }
+    """
+
+    answer = parse_structured_answer(raw, evidence)
+
+    assert len(answer.recommended_controls) == 5
+    assert len(answer.risk_control_matrix[0].controls) == 5

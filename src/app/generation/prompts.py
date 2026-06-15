@@ -3,6 +3,8 @@ from __future__ import annotations
 from app.retrieval.graph_context import graph_context_prompt_text
 from app.schemas import QueryPlan, RetrievedEvidence
 
+MAX_EVIDENCE_CHARS = 850
+
 SYSTEM_PROMPT = """Role:
 You are a cybersecurity and GRC risk analyst preparing source-grounded risk documentation.
 
@@ -23,7 +25,12 @@ Forbidden behavior:
 - Do not add controls that are not present in the retrieved evidence.
 
 Output contract:
-Return only valid JSON with exactly the requested keys."""
+Return only valid JSON with exactly the requested keys.
+
+Output discipline:
+Be concise and surgical. Use short noun phrases and compact bullet-like JSON values. Do not explain
+your method, do not add background education, and do not use adjectives unless they change the risk
+meaning."""
 
 
 def build_structured_answer_prompt(
@@ -48,8 +55,8 @@ Input explanation:
 Question:
 {question}
 
-Plan:
-{plan.model_dump_json(indent=2)}
+Search focus:
+{_format_plan_focus(plan)}
 
 Retrieved evidence:
 {evidence_text}
@@ -84,6 +91,11 @@ Return exactly this JSON shape:
 }}
 
 Rules:
+- Keep threats, vulnerabilities, risks, and assumptions to maximum 3 items each.
+- Keep recommended_controls to maximum 5 items.
+- Keep risk_control_matrix to maximum 3 rows.
+- Keep each matrix cell short: preferably under 18 words.
+- Use crisp labels, not prose paragraphs, for threats, vulnerabilities, risks, gaps, and controls.
 - Cite evidence as S1, S2, etc. only when the cited source is listed above.
 - Put standards/control IDs in recommended_controls when evidence contains them.
 - Every recommended control must be traceable to retrieved evidence.
@@ -103,7 +115,22 @@ def _format_evidence(index: int, hit: RetrievedEvidence) -> str:
         or metadata.get("record_index")
     )
     suffix = f" location={location}" if location is not None else ""
+    excerpt = _truncate_evidence(hit.chunk.text)
     return (
         f"[S{index}] score={hit.score:.3f} method={hit.retrieval_method} "
-        f"source={source}{suffix} chunk_id={hit.chunk.id}\n{hit.chunk.text}"
+        f"source={source}{suffix} chunk_id={hit.chunk.id}\n{excerpt}"
     )
+
+
+def _format_plan_focus(plan: QueryPlan) -> str:
+    labels = []
+    for sub_question in plan.sub_questions:
+        labels.append(f"- {sub_question.label}: {sub_question.focus}")
+    return "\n".join(labels)
+
+
+def _truncate_evidence(text: str) -> str:
+    clean = " ".join(str(text or "").split())
+    if len(clean) <= MAX_EVIDENCE_CHARS:
+        return clean
+    return f"{clean[:MAX_EVIDENCE_CHARS].rstrip()} [...]"

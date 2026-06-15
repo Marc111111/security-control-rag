@@ -256,6 +256,35 @@ Implemented correction:
 - The browser failure modal now explains the failed risk matrix in human language and keeps raw
   technical error details collapsed.
 
+## 2026-06-15 Prompt And Handoff Bloat Finding
+
+A later failed run showed a separate workflow hygiene issue:
+
+- the risk-answer prompt included a full repeated planner JSON object plus long retrieved chunks;
+- the visible workflow step stored both the prompt and retrieved evidence package, duplicating large
+  data in the UI;
+- the `Store risk answer` step carried the full `GraphRagAnswer.debug` payload forward, including
+  prompt messages and retrieved chunks;
+- the next step therefore started with a very large input that was not useful to a human reviewer;
+- quality-gate warnings were treated as blocking failures, causing a usable first answer to be
+  retried until the model produced a worse answer.
+
+Implemented correction:
+
+- risk-answer prompts now use a compact search-focus summary instead of full planner JSON;
+- retrieved evidence sent to the model is excerpted per source;
+- visible prompt steps show compact prompt previews and source summaries, not full debug dumps;
+- normal workflow handoff state stores compact risk answers and compact sources only;
+- full debug material remains in evaluation/debug logs, not in every step input/output;
+- risk-answer warnings remain visible but no longer fail the workflow when there are no blocking
+  issues.
+- Ollama calls now receive `num_predict` from the configured output-token estimate, matching the
+  OpenAI `max_output_tokens` behavior.
+- Risk-answer prompts and validators enforce surgical output: short labels, limited list sizes,
+  limited matrix rows, and no background prose.
+- Final report prompts and validators allow prose only where useful: controlled 2-4 sentence
+  paragraphs with the most important finding first.
+
 ## Known Risks And Improvements
 
 - LLM output validation now exists for the complete-assessment risk-answer and final-paragraph

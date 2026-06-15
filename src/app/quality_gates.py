@@ -78,6 +78,13 @@ def human_failure_message(result: GateResult) -> str:
             "match the required report sections or did not use the validated facts. Do not approve "
             "this run until the report-writing step is corrected."
         )
+    if result.gate == "workflow_step_payload":
+        return (
+            "The workflow stopped because one step tried to pass data that was too large or too "
+            "technical to the next step. This usually means debug details, full prompts, or raw "
+            "model output leaked into the normal workflow handoff. The solution owner must compact "
+            "that step so it passes only business facts, short source summaries, and clear status."
+        )
     parts = [
         f"Quality gate failed: {result.summary}",
     ]
@@ -126,6 +133,103 @@ def validate_prompt_contract(
     if issues:
         return failed_gate(gate, f"The {task_name} prompt is incomplete.", issues)
     return passed_gate(gate, f"The {task_name} prompt contains the required control instructions.")
+
+
+def validate_workflow_step_payload(
+    *,
+    step_name: str,
+    input_payload: Any,
+    output_payload: Any,
+    max_payload_chars: int = 60_000,
+    max_model_prompt_chars: int = 18_000,
+) -> GateResult:
+    issues: list[GateIssue] = []
+    input_size = _json_size(input_payload)
+    output_size = _json_size(output_payload)
+    if input_size > max_payload_chars:
+        issues.append(
+            GateIssue(
+                field="input",
+                message=(
+                    f"Step input is too large for a readable workflow handoff "
+                    f"({input_size:,} characters)."
+                ),
+                operator_fix=(
+                    "Do not approve this run. The workflow is carrying too much internal data "
+                    "between steps."
+                ),
+                system_fix=(
+                    "Pass a compact business object to the next step and move full debug data "
+                    "to an explicit debug log or preview artifact."
+                ),
+            )
+        )
+    if output_size > max_payload_chars:
+        issues.append(
+            GateIssue(
+                field="output",
+                message=(
+                    f"Step output is too large for a readable workflow handoff "
+                    f"({output_size:,} characters)."
+                ),
+                operator_fix=(
+                    "Do not approve this run. The workflow produced an oversized intermediate "
+                    "result."
+                ),
+                system_fix=(
+                    "Compact the step output before it becomes input to the next step. Keep "
+                    "only business facts, source IDs, and short previews."
+                ),
+            )
+        )
+    forbidden_keys = _find_forbidden_debug_keys(output_payload)
+    if forbidden_keys:
+        issues.append(
+            GateIssue(
+                field="output",
+                message=(
+                    "Step output contains debug-only fields that should not travel through the "
+                    f"normal workflow: {', '.join(sorted(forbidden_keys))}."
+                ),
+                operator_fix=(
+                    "Do not approve this run. The workflow is mixing debug material with "
+                    "business handoff data."
+                ),
+                system_fix=(
+                    "Remove debug, prompt_messages, messages_sent_to_model, and full raw model "
+                    "responses from normal step outputs. Store them only in debug logs or "
+                    "explicit full-detail previews."
+                ),
+            )
+        )
+    prompt_chars = _max_model_prompt_chars(output_payload)
+    if prompt_chars > max_model_prompt_chars:
+        issues.append(
+            GateIssue(
+                field="output.model_prompt",
+                message=(
+                    f"Model prompt is too large ({prompt_chars:,} characters)."
+                ),
+                operator_fix=(
+                    "Do not approve this run. The model is being asked to process too much "
+                    "context for this one step."
+                ),
+                system_fix=(
+                    "Use compact search focus and source excerpts. Do not include full planner "
+                    "JSON, full chunks, or repeated debug data in the prompt."
+                ),
+            )
+        )
+    if issues:
+        return failed_gate(
+            "workflow_step_payload",
+            f"Workflow step '{step_name}' is not clean enough to pass to the next step.",
+            issues,
+        )
+    return passed_gate(
+        "workflow_step_payload",
+        f"Workflow step '{step_name}' passed payload hygiene checks.",
+    )
 
 
 def validate_risk_answer(
@@ -178,6 +282,36 @@ def validate_risk_answer(
         for value in values:
             if _is_bad_text(value):
                 issues.append(_bad_text_issue(field_name, value))
+            if _word_count(value) > 28:
+                issues.append(
+                    GateIssue(
+                        field=field_name,
+                        message=(
+                            "Value is too verbose for a structured risk field. Use a short "
+                            f"label or phrase: {str(value)[:120]}"
+                        ),
+                        operator_fix="Do not approve verbose structured fields.",
+                        system_fix=(
+                            "Tighten the prompt or add a compression pass so structured fields "
+                            "use concise labels instead of prose."
+                        ),
+                    )
+                )
+        max_items = 5 if field_name == "recommended_controls" else 3
+        if len(values) > max_items:
+            issues.append(
+                GateIssue(
+                    field=field_name,
+                    message=(
+                        f"Too many items for a concise risk answer "
+                        f"({len(values)} > {max_items})."
+                    ),
+                    operator_fix="Do not approve this run; the section is too broad to review.",
+                    system_fix=(
+                        "Limit the prompt and validator to the highest-value items only."
+                    ),
+                )
+            )
 
     if not answer.risk_control_matrix:
         issues.append(
@@ -198,6 +332,31 @@ def validate_risk_answer(
             value = getattr(row, field_name)
             if not value or _is_bad_text(value):
                 issues.append(_bad_text_issue(f"{prefix}.{field_name}", value))
+            elif _word_count(value) > 24:
+                issues.append(
+                    GateIssue(
+                        field=f"{prefix}.{field_name}",
+                        message=(
+                            "Matrix value is too verbose. Use a short business phrase: "
+                            f"{str(value)[:120]}"
+                        ),
+                        operator_fix="Do not approve rows that bury the finding in prose.",
+                        system_fix=(
+                            "Compress matrix cells to concise phrases before passing them "
+                            "forward."
+                        ),
+                    )
+                )
+        if len(answer.risk_control_matrix) > 3:
+            issues.append(
+                GateIssue(
+                    field="risk_control_matrix",
+                    message="Risk/control matrix has too many rows for this step.",
+                    operator_fix="Do not approve overly broad matrix output.",
+                    system_fix="Keep only the top three most relevant rows for this weakness.",
+                )
+            )
+            break
         if not row.controls:
             issues.append(
                 GateIssue(
@@ -244,7 +403,8 @@ def validate_risk_answer(
                 )
             )
 
-    if issues:
+    blocking = [issue for issue in issues if issue.severity == "blocking"]
+    if blocking:
         return failed_gate(
             "risk_answer_output",
             (
@@ -252,6 +412,15 @@ def validate_risk_answer(
                 f"risk-analysis contract for: {question[:120]}"
             ),
             issues,
+        )
+    if issues:
+        return GateResult(
+            gate="risk_answer_output",
+            passed=True,
+            summary=(
+                "Risk answer passed required checks with warnings that should be reviewed."
+            ),
+            issues=issues,
         )
     return passed_gate(
         "risk_answer_output",
@@ -292,6 +461,22 @@ def validate_final_paragraphs(
             )
         elif _is_bad_text(value):
             issues.append(_bad_text_issue(key, value))
+        elif _word_count(value) > 140:
+            issues.append(
+                GateIssue(
+                    field=key,
+                    message=(
+                        "Report paragraph is too long for the business summary contract."
+                    ),
+                    operator_fix=(
+                        "Do not approve this report section; it is too verbose for review."
+                    ),
+                    system_fix=(
+                        "Constrain final report paragraphs to the most important facts first "
+                        "and remove background explanation."
+                    ),
+                )
+            )
 
     joined = " ".join(paragraphs.values()).lower()
     if vendor_name.lower() not in joined:
@@ -420,6 +605,10 @@ def _is_bad_text(value: str) -> bool:
     return False
 
 
+def _word_count(value: object) -> int:
+    return len(re.findall(r"\b\w+\b", str(value or "")))
+
+
 def _bad_text_issue(field: str, value: object) -> GateIssue:
     preview = str(value or "")[:120]
     return GateIssue(
@@ -456,3 +645,43 @@ def _validated_terms(validated_facts: dict[str, Any]) -> set[str]:
         if candidate in raw:
             terms.add(candidate)
     return terms
+
+
+def _json_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except TypeError:
+        return len(str(value))
+
+
+def _find_forbidden_debug_keys(value: Any, path: str = "") -> set[str]:
+    forbidden = {
+        "debug",
+        "prompt_messages",
+        "messages_sent_to_model",
+        "raw_model_response",
+    }
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key)
+            next_path = f"{path}.{key_text}" if path else key_text
+            if key_text in forbidden:
+                found.add(next_path)
+            found.update(_find_forbidden_debug_keys(item, next_path))
+    elif isinstance(value, list):
+        for index, item in enumerate(value[:20]):
+            found.update(_find_forbidden_debug_keys(item, f"{path}[{index}]"))
+    return found
+
+
+def _max_model_prompt_chars(value: Any) -> int:
+    if isinstance(value, dict):
+        own = 0
+        prompt = value.get("model_prompt")
+        if isinstance(prompt, dict):
+            own = int(prompt.get("total_characters_sent_to_model") or 0)
+        return max([own, *[_max_model_prompt_chars(item) for item in value.values()]])
+    if isinstance(value, list):
+        return max([0, *[_max_model_prompt_chars(item) for item in value[:20]]])
+    return 0

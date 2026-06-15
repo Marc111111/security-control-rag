@@ -67,9 +67,9 @@ def augment_answer_with_evidence_controls(
         for control in answer.recommended_controls
         if control.lower() in evidence_text
     ]
-    controls = list(dict.fromkeys([*extracted, *supported_existing]))
+    controls = list(dict.fromkeys([*extracted, *supported_existing]))[:5]
     rows = [
-        row.model_copy(update={"controls": list(dict.fromkeys([*controls, *row.controls]))})
+        row.model_copy(update={"controls": list(dict.fromkeys([*controls, *row.controls]))[:5]})
         for row in answer.risk_control_matrix
     ]
     return answer.model_copy(

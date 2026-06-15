@@ -292,3 +292,9 @@ found the right CIS/SCF anti-malware evidence, but raw graph rows included loose
 relationship labels and distracted the local model. Qdrant/BM25 text evidence is now authoritative;
 graph rows must be filtered to retrieved chunk IDs, malformed graph entity names must be dropped,
 and prompts must describe graph output as secondary filtered hints.
+
+LLM output must be bounded by purpose. Risk-analysis calls should produce compact JSON with short
+labels, limited lists, and no background prose. Final report calls may use prose, but only controlled
+2-4 sentence paragraphs with the most important finding first. OpenAI calls use
+`max_output_tokens`; Ollama calls use `num_predict`. Token gates protect model-call size/cost,
+payload hygiene gates protect step-to-step data cleanliness, and style gates protect usefulness.

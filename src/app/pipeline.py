@@ -174,7 +174,7 @@ class GraphRagPipeline:
         graph_context_rows = build_graph_context_rows(graph_rows, evidence)
         retrieved_chunks = [hit.model_dump() for hit in evidence]
         retrieval_output = {
-            "retrieved_chunks": retrieved_chunks,
+            "retrieved_chunks": _compact_retrieved_evidence(evidence),
             "graph_context_rows": graph_context_rows,
             "raw_graph_row_count": len(graph_rows),
         }
@@ -253,7 +253,7 @@ class GraphRagPipeline:
             )
             raise QualityGateFailure(prompt_gate)
         prompt_output = {
-            "messages_sent_to_model": messages,
+            "model_prompt": _compact_prompt_messages(messages),
             "retrieved_evidence": retrieval_output,
             "quality_gate": prompt_gate.as_dict(),
         }
@@ -336,7 +336,7 @@ class GraphRagPipeline:
             attempts.append(
                 {
                     "attempt": attempt,
-                    "raw_model_response": raw,
+                    "raw_model_response_preview": _preview_text(raw, 1_500),
                     "token_usage": token_usage,
                     "quality_gate": final_gate.as_dict(),
                 }
@@ -385,7 +385,7 @@ class GraphRagPipeline:
             for index, hit in enumerate(evidence, 1)
         ]
         model_output = {
-            "raw_model_response": raw,
+            "raw_model_response_preview": _preview_text(raw, 1_500),
             "structured_answer": structured.model_dump(),
             "sources": sources,
             "attempts": attempts,
@@ -446,7 +446,7 @@ class GraphRagPipeline:
         graph_context_rows = build_graph_context_rows(graph_rows, evidence)
         return {
             "plan": plan.model_dump(),
-            "retrieved_chunks": [hit.model_dump() for hit in evidence],
+            "retrieved_chunks": _compact_retrieved_evidence(evidence),
             "graph_context_rows": graph_context_rows,
             "raw_graph_row_count": len(graph_rows),
         }
@@ -510,3 +510,60 @@ def _merge_question_context(question: str, context: dict[str, Any] | None) -> st
         return question
     context_lines = "\n".join(f"{key}: {value}" for key, value in sorted(context.items()))
     return f"{question}\n\nStructured context:\n{context_lines}"
+
+
+def _compact_prompt_messages(messages: list[dict[str, str]]) -> dict[str, Any]:
+    total_chars = sum(len(message.get("content", "")) for message in messages)
+    return {
+        "message_count": len(messages),
+        "total_characters_sent_to_model": total_chars,
+        "messages": [
+            {
+                "role": message.get("role"),
+                "characters": len(message.get("content", "")),
+                "preview": _preview_text(message.get("content", ""), 2_000),
+            }
+            for message in messages
+        ],
+        "note": (
+            "This is a compact preview of the prompt sent to the model. Full prompt text is "
+            "stored in the evaluation/debug log for development review."
+        ),
+    }
+
+
+def _compact_retrieved_evidence(evidence: list[Any]) -> list[dict[str, Any]]:
+    compact: list[dict[str, Any]] = []
+    for index, hit in enumerate(evidence, 1):
+        metadata = dict(hit.chunk.metadata)
+        compact.append(
+            {
+                "source_id": f"S{index}",
+                "chunk_id": hit.chunk.id,
+                "score": round(float(hit.score), 6),
+                "source": hit.source,
+                "retrieval_method": hit.retrieval_method,
+                "sub_question": hit.sub_question,
+                "metadata": {
+                    key: metadata.get(key)
+                    for key in [
+                        "filename",
+                        "document_type",
+                        "page_or_section",
+                        "framework",
+                        "control_id",
+                        "source_path",
+                    ]
+                    if metadata.get(key) is not None
+                },
+                "text_preview": _preview_text(hit.chunk.text, 700),
+            }
+        )
+    return compact
+
+
+def _preview_text(value: object, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()} [...]"

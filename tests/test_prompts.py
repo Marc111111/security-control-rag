@@ -61,3 +61,32 @@ def test_structured_answer_prompt_uses_filtered_graph_hints_not_raw_graph() -> N
         "'Malware infection'"
     ) in prompt
     assert "source_chunk_id" not in prompt
+
+
+def test_structured_answer_prompt_keeps_retrieved_evidence_compact() -> None:
+    evidence = [
+        RetrievedEvidence(
+            chunk=DocumentChunk(
+                id=f"chunk-{index}",
+                text="Important control text. " + ("x" * 4_000),
+                metadata={"source_path": f"standards/source-{index}.pdf"},
+            ),
+            score=1.0,
+            source=f"standards/source-{index}.pdf",
+            retrieval_method="keyword",
+        )
+        for index in range(8)
+    ]
+    plan = RiskQuestionPlanner().plan("No disaster recovery test report was provided.")
+
+    messages = build_structured_answer_prompt(
+        "No disaster recovery test report was provided.",
+        plan,
+        evidence,
+        [],
+    )
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert "Search focus:" in prompt
+    assert '"sub_questions"' not in prompt
+    assert len(prompt) < 12_000

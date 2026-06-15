@@ -154,6 +154,24 @@ Checks:
 
 Failure behavior: stop before the model call.
 
+### 5a. Workflow Payload Hygiene Gate
+
+Applies to every visible workflow step before the step is accepted as part of the chain.
+
+Checks:
+
+- step input and output are bounded enough to be readable and safe to pass forward
+- normal workflow handoff does not contain full debug objects
+- normal workflow handoff does not contain full prompt messages
+- normal workflow handoff does not contain full raw model responses
+- model prompt summaries stay under a configured size ceiling
+
+Failure behavior: stop immediately with a human-readable explanation. The operator should not
+approve the run. The solution owner must compact the failed step so it passes only business facts,
+source IDs, short source previews, status, and quality-gate summaries. Full prompts, full raw
+responses, and retrieval debug data belong in explicit debug logs or full-detail views, not in the
+step-to-step data contract.
+
 ### 6. Risk Answer Output Gate
 
 Applies after each risk-answer LLM call.
@@ -167,6 +185,10 @@ Schema checks:
 
 Content checks:
 
+- respects the risk-answer style contract: concise labels and phrases, not prose essays
+- threats, vulnerabilities, risks, and assumptions stay within configured item limits
+- matrix rows stay within the configured row limit
+- matrix cells are short business phrases
 - no placeholder final values such as `See retrieved evidence`
 - no malformed fragments or repeated garbage text
 - no JSON-repair commentary, markdown essay, or meta-analysis
@@ -225,6 +247,7 @@ Schema checks:
 
 Content checks:
 
+- paragraphs stay within the configured length limit
 - mentions the actual vendor
 - mentions the tier level where relevant
 - mentions the real weaknesses
@@ -241,6 +264,33 @@ Consistency checks:
 
 Failure behavior: retry with validation errors. If still invalid, mark the final paragraph step
 failed and do not produce a successful final result.
+
+## Output Budgeting And Style
+
+Every model call must have both:
+
+- a generation cap enforced by the model provider where possible (`max_output_tokens` for OpenAI,
+  `num_predict` for Ollama);
+- a prompt-level style contract that says what kind of output is expected.
+
+Risk-analysis calls should be surgical:
+
+- compact JSON only
+- short labels and phrases
+- maximum-value facts first
+- no explanation of the method
+- no background education
+- no adjective-heavy prose
+
+Final report calls may use prose, but only controlled prose:
+
+- 2-4 sentences per paragraph
+- most important finding first
+- no filler
+- no methodology narration
+
+Token gates prevent cost/runaway model-call size. Payload hygiene gates prevent oversized step
+handoffs. Output style gates prevent technically valid but useless rambling.
 
 ## Retry Policy
 

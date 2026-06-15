@@ -24,6 +24,7 @@ class OllamaChatClient:
         base_url: str = "http://localhost:11434",
         timeout: float = 600.0,
         temperature: float = 0,
+        max_output_tokens: int | None = None,
         keep_alive: str | None = None,
         cancel_event: threading.Event | None = None,
     ) -> None:
@@ -31,6 +32,7 @@ class OllamaChatClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.temperature = temperature
+        self.max_output_tokens = max_output_tokens
         self.keep_alive = keep_alive
         self.cancel_event = cancel_event
         self.last_usage: dict[str, int | str] | None = None
@@ -41,7 +43,14 @@ class OllamaChatClient:
             "model": self.model,
             "messages": messages,
             "stream": self.cancel_event is not None,
-            "options": {"temperature": self.temperature},
+            "options": {
+                key: value
+                for key, value in {
+                    "temperature": self.temperature,
+                    "num_predict": self.max_output_tokens,
+                }.items()
+                if value is not None
+            },
         }
         if self.keep_alive is not None:
             payload["keep_alive"] = self.keep_alive

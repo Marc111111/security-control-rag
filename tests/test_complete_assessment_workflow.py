@@ -542,6 +542,46 @@ def test_compact_rag_evidence_removes_large_debug_payloads() -> None:
     assert len(compact[0]["retrieved_chunks"][0]["text"]) == 350
 
 
+def test_rag_answer_dump_does_not_carry_debug_payloads() -> None:
+    answer = complete_assessment.GraphRagAnswer.model_validate(
+        {
+            "answer": {
+                "executive_summary": "Summary",
+                "recommended_controls": ["CIS Safeguard 10.1"],
+                "risk_control_matrix": [
+                    {
+                        "gap": "Missing anti-malware",
+                        "threat": "Malware",
+                        "vulnerability": "Unprotected endpoints",
+                        "risk": "Business disruption",
+                        "controls": ["CIS Safeguard 10.1"],
+                        "evidence": ["S1"],
+                    }
+                ],
+            },
+            "insufficient_evidence": False,
+            "sources": [
+                {
+                    "id": "S1",
+                    "source": "standards/cis.pdf",
+                    "metadata": {
+                        "filename": "cis.pdf",
+                        "source_path": "standards/cis.pdf",
+                        "unused": "x" * 20_000,
+                    },
+                }
+            ],
+            "debug": {"prompt_messages": [{"content": "x" * 20_000}]},
+        }
+    )
+
+    dumped = complete_assessment._rag_answer_dump(answer)
+
+    assert "debug" not in dumped
+    assert "unused" not in dumped["sources"][0]["metadata"]
+    assert len(json.dumps(dumped)) < 3_000
+
+
 def _memory_pipeline(tmp_path: Path, chat_model: object) -> GraphRagPipeline:
     settings = Settings(
         vector_backend="memory",

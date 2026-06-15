@@ -27,6 +27,7 @@ from app.quality_gates import (
     repair_prompt,
     validate_final_paragraphs,
     validate_prompt_contract,
+    validate_workflow_step_payload,
 )
 from app.schemas import GraphRagAnswer
 from app.workflows.run_store import WorkflowRunStore
@@ -241,6 +242,35 @@ class CompleteAssessmentWorkflow:
         self.pipeline.chat_model = selected_chat_model
 
         def add_step(step: WorkflowStep) -> None:
+            payload_gate = validate_workflow_step_payload(
+                step_name=step.name,
+                input_payload=step.input,
+                output_payload=step.output,
+            )
+            if not payload_gate.passed:
+                failure_step = WorkflowStep(
+                    name=f"Quality gate failed for workflow payload {step.name}",
+                    explanation=(
+                        "Stops because this workflow step produced data that is too large, "
+                        "too technical, or polluted with debug details to pass forward safely."
+                    ),
+                    tool="Python workflow payload quality gate",
+                    input={
+                        "step_name": step.name,
+                        "input_size": len(json.dumps(step.input, default=str)),
+                        "output_size": len(json.dumps(step.output, default=str)),
+                    },
+                    process=(
+                        "We check every step handoff before it becomes the next step's input. "
+                        "The workflow must pass compact business facts and source summaries, "
+                        "not full debug objects or oversized prompts."
+                    ),
+                    output=payload_gate.as_dict(),
+                )
+                steps.append(failure_step)
+                if progress_callback is not None:
+                    progress_callback(failure_step)
+                raise QualityGateFailure(payload_gate)
             steps.append(step)
             if progress_callback is not None:
                 progress_callback(step)
@@ -482,7 +512,7 @@ class CompleteAssessmentWorkflow:
                             "incomplete."
                         ),
                         tool="Python quality gate",
-                        input={"messages_sent_to_model": paragraph_messages},
+                        input={"model_prompt": _compact_messages(paragraph_messages)},
                         process=(
                             "We check that the prompt explains the model role, task, trusted "
                             "fact boundary, forbidden behavior, and output contract."
@@ -505,7 +535,7 @@ class CompleteAssessmentWorkflow:
             )
             paragraph_input = {
                 "validated_fact_packet_from_previous_step": validated_fact_packet,
-                "messages_sent_to_model": paragraph_messages,
+                "model_prompt": _compact_messages(paragraph_messages),
                 "quality_gate": paragraph_prompt_gate.as_dict(),
                 "api_key": "[hidden]",
             }
@@ -569,7 +599,7 @@ class CompleteAssessmentWorkflow:
                 paragraph_attempts.append(
                     {
                         "attempt": attempt,
-                        "raw_model_output": raw_paragraphs,
+                        "raw_model_output_preview": _preview_text(raw_paragraphs, 1_500),
                         "parsed_paragraphs": paragraphs,
                         "token_usage": paragraph_token_usage,
                         "quality_gate": paragraph_gate.as_dict(),
@@ -627,7 +657,7 @@ class CompleteAssessmentWorkflow:
                         "paragraphs and not decide scores, schema, or database fields."
                     ),
                     output={
-                        "raw_model_output": raw_paragraphs,
+                        "raw_model_output_preview": _preview_text(raw_paragraphs, 1_500),
                         "parsed_paragraphs": paragraphs,
                         "attempts": paragraph_attempts,
                         "quality_gate": paragraph_gate.as_dict(),
@@ -821,6 +851,7 @@ def _chat_model(
     return OllamaChatClient(
         model=model.model,
         base_url=ollama_base_url,
+        max_output_tokens=model.estimated_output_tokens,
         keep_alive="0s",
         cancel_event=cancel_event,
     )
@@ -891,7 +922,11 @@ def _paragraph_prompt(
                 "- Do not invent facts outside the validated fact packet.\n\n"
                 "Output contract:\n"
                 "Return only valid JSON with exactly these keys: management_summary, "
-                "introduction, objective, risk_exposure, conclusion."
+                "introduction, objective, risk_exposure, conclusion.\n\n"
+                "Output discipline:\n"
+                "Use controlled prose. Each paragraph must be 2-4 sentences. Put the most "
+                "important finding first. Avoid filler, adjectives, methodology explanations, "
+                "and long background education."
             ),
         },
         {
@@ -899,7 +934,7 @@ def _paragraph_prompt(
             "content": (
                 "Task:\n"
                 "Write only the five requested paragraph values. Each paragraph must be "
-                "business-readable and grounded in the validated facts.\n\n"
+                "business-readable, concise, and grounded in the validated facts.\n\n"
                 "Required output JSON:\n"
                 "{\n"
                 '  "management_summary": "",\n'
@@ -1099,7 +1134,36 @@ def _final_result(
 
 
 def _rag_answer_dump(answer: GraphRagAnswer) -> dict[str, Any]:
-    return answer.model_dump()
+    data = answer.model_dump()
+    return {
+        "answer": _compact_risk_answer(data.get("answer") or {}),
+        "insufficient_evidence": data.get("insufficient_evidence", False),
+        "sources": [_compact_source(source) for source in (data.get("sources") or [])[:8]],
+    }
+
+
+def _compact_messages(messages: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "message_count": len(messages),
+        "total_characters_sent_to_model": sum(
+            len(message.get("content", "")) for message in messages
+        ),
+        "messages": [
+            {
+                "role": message.get("role"),
+                "characters": len(message.get("content", "")),
+                "preview": _preview_text(message.get("content", ""), 2_000),
+            }
+            for message in messages
+        ],
+    }
+
+
+def _preview_text(value: object, limit: int) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()} [...]"
 
 
 def _compact_rag_evidence(rag_answers: list[dict[str, Any]]) -> list[dict[str, Any]]:

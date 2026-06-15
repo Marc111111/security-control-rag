@@ -1098,6 +1098,22 @@
             systemFixes: ["Inspect the final report prompt and repair step before relying on this output."]
           };
         }
+        if (gateName === "workflow_step_payload") {
+          return {
+            title: "A workflow step passed too much internal data forward",
+            message: "The workflow stopped because one step produced data that was too large, too technical, or polluted with debug details to safely become the next step's input.",
+            whatWentWrong: [
+              "A step handoff contained oversized data, full prompt text, raw model output, or debug-only fields.",
+              "That would make the workflow hard to understand and could confuse later model calls."
+            ],
+            whyItHappened: [
+              "The workflow mixed development/debug data with the business data that should move between steps.",
+              "Each step needs a compact handoff object and a separate full-detail debug artifact."
+            ],
+            operatorFixes: ["Do not approve this run. Ask the solution owner to compact the failed step before retrying."],
+            systemFixes: ["Remove full prompts, debug objects, raw responses, and oversized retrieval dumps from normal step input/output. Keep them only behind explicit full-detail debug views."]
+          };
+        }
         return {
           title: gate ? "The workflow failed a quality check" : "The workflow failed",
           message: gate?.summary || job.error || "The workflow stopped before producing a valid result.",
