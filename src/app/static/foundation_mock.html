@@ -393,6 +393,10 @@
         color: #25313d;
         font-size: 13px;
         font-weight: 900;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
       }
       .form-grid {
         display: grid;
@@ -563,6 +567,36 @@
         gap: 10px;
         font-size: 12px;
       }
+      .evidence-inline {
+        display: none;
+        margin-bottom: 10px;
+        border: 1px solid #d4e4e0;
+        border-radius: 8px;
+        background: #fbfcfa;
+        overflow: hidden;
+      }
+      .evidence-inline.open { display: block; }
+      .evidence-inline-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 8px 9px;
+        border-bottom: 1px solid var(--line);
+      }
+      .evidence-inline-head strong {
+        font-size: 12px;
+        color: #25313d;
+      }
+      .evidence-inline-actions {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      .evidence-inline pre {
+        max-height: 360px;
+        border-top: 0;
+      }
       .runs-help {
         color: var(--muted);
         line-height: 1.35;
@@ -723,6 +757,7 @@
           </div>
         </div>
         <div class="actions compact-actions">
+          <a class="button-like secondary" id="openQuestionnaireBuilder" href="/mock/foundation/questionnaire" target="foundationQuestionnaireEditor">Populate questionnaire</a>
           <a class="button-like secondary" id="openPacketWindow" href="/mock/foundation/packet-editor" target="_blank" rel="noreferrer">Simulated SQL Result JSON</a>
           <button class="secondary" id="reset" type="button" onclick="resetPacketToSample()">Reset input</button>
         </div>
@@ -741,22 +776,6 @@
             <div class="chat-output" id="corpusAnswer"><div class="empty">No direct question yet.</div></div>
           </div>
         </div>
-        <details class="db-editor" id="dbEditor">
-          <summary>Optional simulated DB input form</summary>
-          <div class="panel-body">
-            <div class="form-note">
-              Edit the business context returned by the simulated PostgreSQL query before running
-              the workflow. These fields become the actual workflow input. Field meanings are
-              documented in <a href="/mock/foundation/business-context" target="_blank" rel="noreferrer">business context manifest</a>.
-            </div>
-            <div id="dbForm"></div>
-            <div class="db-actions">
-              <button class="secondary" id="applyDbForm">Apply form to JSON</button>
-              <button class="secondary" id="saveDbScenario">Save scenario</button>
-              <button class="secondary" id="resetDbScenario">Reset initial content</button>
-            </div>
-          </div>
-        </details>
         <div class="actions">
           <button id="run">Run Complete Workflow</button>
           <button class="secondary" id="cancel" disabled>Cancel Run</button>
@@ -774,6 +793,7 @@
           <div class="panel-header"><div class="panel-title">Result Summary And Saved Runs</div></div>
           <div class="panel-body">
             <div id="currentRunActions" class="current-result-actions empty">No current run result yet.</div>
+            <div id="evidenceInline" class="evidence-inline"></div>
             <div class="runs-view" id="runs"></div>
           </div>
         </div>
@@ -805,6 +825,7 @@
       const packetEl = document.querySelector("#packet");
       const workflowEl = document.querySelector("#workflow");
       const currentRunActionsEl = document.querySelector("#currentRunActions");
+      const evidenceInlineEl = document.querySelector("#evidenceInline");
       const costEstimateEl = document.querySelector("#costEstimate");
       const runsEl = document.querySelector("#runs");
       const metricsEl = document.querySelector("#metrics");
@@ -819,6 +840,7 @@
       const corpusAnswerEl = document.querySelector("#corpusAnswer");
       const expandCorpusAnswerEl = document.querySelector("#expandCorpusAnswer");
       const savedScenarioKey = "foundationMock.savedDbScenario";
+      const savedQuestionnaireKey = "foundationMock.savedQuestionnaire";
       let sample = null;
       let currentJobId = null;
       let pollTimer = null;
@@ -865,13 +887,13 @@
         sample = await getJson("/api/mock/foundation-packet");
         const saved = loadSavedScenario();
         packetEl.value = JSON.stringify(saved || sample, null, 2);
-        renderDbForm(currentPacket());
         clearOutput();
       }
 
       function loadSavedScenario() {
         try {
-          const raw = window.localStorage.getItem(savedScenarioKey);
+          const raw = window.localStorage.getItem(savedQuestionnaireKey)
+            || window.localStorage.getItem(savedScenarioKey);
           return raw ? JSON.parse(raw) : null;
         } catch {
           return null;
@@ -890,7 +912,6 @@
         const parsed = JSON.parse(text);
         packetEl.value = JSON.stringify(parsed, null, 2);
         dbFormDirty = false;
-        renderDbForm(parsed);
         clearOutput();
         statusEl.textContent = message;
         estimateCostQuietly();
@@ -900,13 +921,13 @@
       function resetPacketToSample(message = "Reset simulated DB input to the initial sample.") {
         packetEl.value = JSON.stringify(sample, null, 2);
         window.localStorage.removeItem(savedScenarioKey);
-        renderDbForm(sample);
         clearOutput();
         statusEl.textContent = message;
         estimateCostQuietly();
       }
 
       function renderDbForm(packet) {
+        if (!dbFormEl) return;
         const tierAttributes = Object.fromEntries((packet.tier?.attributes || []).map((item) => [item.name, item]));
         dbFormEl.innerHTML = `
           <div class="form-section">Vendor business context</div>
@@ -927,7 +948,13 @@
             ${tierField(tierAttributes, "geolocation", "Geolocation", "Region where the vendor operates or processes data.")}
           </div>
           <div class="form-section">Questionnaire answers</div>
+          <div class="form-note">
+            These are the questionnaire records that would normally come from PostgreSQL. Add,
+            remove, or edit questions here to simulate a different vendor assessment before running
+            the workflow.
+          </div>
           ${(packet.questionnaire_results || []).map((result, index) => questionFields(result, index)).join("")}
+          ${!(packet.questionnaire_results || []).length ? '<div class="runs-empty">No questionnaire questions yet. Use Add question to create one.</div>' : ""}
         `;
       }
 
@@ -953,8 +980,16 @@
       function questionFields(result, index) {
         const prefix = `questionnaire_results.${index}`;
         const control = `${result.control?.framework || ""} ${result.control?.control_id || ""} - ${result.control?.title || ""}`;
-        return `<div class="form-section">${escapeHtml(result.question_id)} linked control: ${escapeHtml(control)}</div>
+        return `<div class="form-section">
+            <span>${escapeHtml(result.question_id || `Question ${index + 1}`)} linked control: ${escapeHtml(control)}</span>
+            <button class="secondary small" type="button" data-remove-question="${index}">Remove question</button>
+          </div>
           <div class="form-grid">
+            ${field(`${prefix}.question_id`, "Question ID", "Identifier used by the assessment and final report.", result.question_id)}
+            ${field(`${prefix}.control.framework`, "Control framework", "Framework that the question is linked to, for example ISO 27002 or NIST CSF.", result.control?.framework)}
+            ${field(`${prefix}.control.control_id`, "Control ID", "The exact framework control reference used by retrieval and citations.", result.control?.control_id)}
+            ${field(`${prefix}.control.title`, "Control title", "Human-readable control name.", result.control?.title)}
+            ${field(`${prefix}.control.control_type`, "Control type", "How this control mainly reduces risk or improves resilience.", result.control?.control_type || "unknown", "text", false, ["preventative", "detective", "corrective", "recovery", "response", "unknown"])}
             ${field(`${prefix}.question_text`, "Question text", "The question shown to the vendor.", result.question_text, "textarea", true)}
             ${field(`${prefix}.response`, "Vendor answer", "The vendor's direct answer before analyst interpretation.", result.response)}
             ${field(`${prefix}.compliance`, "Compliance assessment", "Analyst assessment used to decide whether this is a strength or weakness.", result.compliance, "text", false, ["full", "partial", "no", "not_applicable", "unknown"])}
@@ -978,6 +1013,128 @@
         if (clear) clearOutput();
         if (updateStatus) statusEl.textContent = "Applied simulated DB form changes to the workflow JSON.";
         return packet;
+      }
+
+      function openQuestionnaireBuilder() {
+        const popup = window.open(
+          "/mock/foundation/questionnaire",
+          "foundationQuestionnaireEditor",
+          "width=1180,height=860"
+        );
+        if (!popup) {
+          window.location.href = "/mock/foundation/questionnaire";
+        }
+      }
+
+      function saveQuestionnaire() {
+        const packet = applyDbFormToPacket({ clear: false, updateStatus: false });
+        window.localStorage.setItem(savedQuestionnaireKey, JSON.stringify(packet));
+        window.localStorage.setItem(savedScenarioKey, JSON.stringify(packet));
+        statusEl.textContent = "Saved this as your user questionnaire. Load user questionnaire will bring it back later.";
+      }
+
+      function loadSavedQuestionnaire() {
+        const saved = loadSavedScenario();
+        if (!saved) {
+          statusEl.textContent = "No saved user questionnaire found yet.";
+          return;
+        }
+        packetEl.value = JSON.stringify(saved, null, 2);
+        renderDbForm(saved);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Loaded the last saved user questionnaire.";
+        estimateCostQuietly();
+      }
+
+      function resetQuestionnaireDefaults() {
+        packetEl.value = JSON.stringify(sample, null, 2);
+        renderDbForm(sample);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Reset questionnaire to the default sample values.";
+        estimateCostQuietly();
+      }
+
+      function clearQuestionnaire() {
+        const blank = blankQuestionnairePacket();
+        packetEl.value = JSON.stringify(blank, null, 2);
+        renderDbForm(blank);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Cleared the questionnaire so you can start from scratch.";
+        estimateCostQuietly();
+      }
+
+      function addQuestion() {
+        const packet = applyDbFormToPacket({ clear: false, updateStatus: false });
+        packet.questionnaire_results = packet.questionnaire_results || [];
+        packet.questionnaire_results.push(newQuestionTemplate(packet.questionnaire_results.length + 1));
+        packetEl.value = JSON.stringify(packet, null, 2);
+        renderDbForm(packet);
+        dbFormDirty = true;
+        clearCostEstimate();
+        statusEl.textContent = "Added a blank questionnaire question. Fill it in, then apply or save.";
+        openQuestionnaireBuilder();
+      }
+
+      function removeQuestion(index) {
+        const packet = applyDbFormToPacket({ clear: false, updateStatus: false });
+        packet.questionnaire_results = packet.questionnaire_results || [];
+        packet.questionnaire_results.splice(index, 1);
+        packetEl.value = JSON.stringify(packet, null, 2);
+        renderDbForm(packet);
+        dbFormDirty = true;
+        clearCostEstimate();
+        statusEl.textContent = "Removed the questionnaire question. Apply or save to keep this version.";
+      }
+
+      function blankQuestionnairePacket() {
+        const blank = clonePacket(sample);
+        blank.assessment_id = "";
+        blank.vendor = {
+          vendor_id: "",
+          name: "",
+          vendor_type: "",
+          business_relationship: "",
+          country: "",
+          services: [],
+        };
+        blank.tier = {
+          level: 1,
+          definition: "",
+          attributes: (sample?.tier?.attributes || []).map((attribute) => ({
+            name: attribute.name,
+            value: "",
+            definition: attribute.definition || "",
+          })),
+        };
+        blank.questionnaire_results = [];
+        blank.metadata = { source: "manual_questionnaire_builder" };
+        return blank;
+      }
+
+      function newQuestionTemplate(number) {
+        return {
+          question_id: `Q${number}`,
+          question_text: "",
+          control: {
+            framework: "",
+            control_id: "",
+            title: "",
+            control_type: "unknown",
+          },
+          response: "",
+          vendor_comment: "",
+          analyst_comment: "",
+          compliance: "unknown",
+          maturity: "unknown",
+          evidence: [],
+        };
+      }
+
+      function clonePacket(packet) {
+        return JSON.parse(JSON.stringify(packet || {}));
       }
 
       function syncDirtyDbForm() {
@@ -1854,6 +2011,7 @@
         workflowEl.innerHTML = `<div class="empty">No run yet.</div>`;
         lastCompletedRun = null;
         updateFinalActions();
+        closeEvidenceInline();
         metricsEl.innerHTML = "";
         statusEl.textContent = "Ready. No workflow has run yet.";
         clearCostEstimate();
@@ -1892,6 +2050,7 @@
             <td class="run-actions">
               <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'summary')">View</button>
               <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'storyline')">Storyline</button>
+              <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'evidence')">Evidence</button>
               <button class="secondary" type="button" onclick="openSavedRun('${escapeHtml(run.run_id)}', 'json')">JSON</button>
             </td>
           </tr>`;
@@ -1947,6 +2106,10 @@
           openTextWindow(`Saved run storyline - ${runId}`, formatStorylineReport(run.final_result || {}));
           return;
         }
+        if (mode === "evidence") {
+          showEvidenceInline(`Saved run evidence - ${runId}`, formatEvidenceReport(run));
+          return;
+        }
         openTextWindow(`Saved run summary - ${runId}`, savedRunSummary(run));
       }
 
@@ -1976,8 +2139,184 @@
           "",
           "Storyline report:",
           storyline,
+          "",
+          "Evidence visibility:",
+          "Use the Evidence button to see which Qdrant, keyword/BM25, and Neo4j/graph context was actually available to the model.",
         ];
         return lines.join("\n");
+      }
+
+      function openEvidenceReport() {
+        if (!lastCompletedRun) return;
+        showEvidenceInline("Current run evidence context", formatEvidenceReport(lastCompletedRun));
+      }
+
+      function showEvidenceInline(title, text) {
+        const previewId = `evidence-${++previewCounter}`;
+        previewStore.set(previewId, { title, text });
+        const shortText = text.length > 6000
+          ? `${text.slice(0, 6000)}\n\n...[evidence report continues. Use Expand for the full report.]`
+          : text;
+        evidenceInlineEl.classList.add("open");
+        evidenceInlineEl.innerHTML = `
+          <div class="evidence-inline-head">
+            <strong>${escapeHtml(title)}</strong>
+            <div class="evidence-inline-actions">
+              <button class="secondary small" type="button" onclick="openPreview('${previewId}', event)">Expand</button>
+              <button class="secondary small" type="button" onclick="closeEvidenceInline()">Close</button>
+            </div>
+          </div>
+          <pre>${escapeHtml(shortText)}</pre>
+        `;
+      }
+
+      function closeEvidenceInline() {
+        evidenceInlineEl.classList.remove("open");
+        evidenceInlineEl.innerHTML = "";
+      }
+
+      function handleQuestionnaireMessage(event) {
+        if (event.origin !== window.location.origin) return;
+        const data = event.data || {};
+        if (data.type !== "foundation-questionnaire-saved" || !data.packet) return;
+        useSavedQuestionnairePacket(data.packet);
+      }
+
+      function handleQuestionnaireStorage(event) {
+        if (event.key !== savedQuestionnaireKey || !event.newValue) return;
+        try {
+          useSavedQuestionnairePacket(JSON.parse(event.newValue));
+        } catch {
+          statusEl.innerHTML = `<span class="warning">Saved questionnaire could not be loaded into the workflow.</span>`;
+        }
+      }
+
+      function useSavedQuestionnairePacket(packet) {
+        packetEl.value = JSON.stringify(packet, null, 2);
+        dbFormDirty = false;
+        clearOutput();
+        statusEl.textContent = "Saved user questionnaire loaded into this workflow. The next run will use it.";
+        estimateCostQuietly();
+      }
+
+      function formatEvidenceReport(run) {
+        const steps = Array.isArray(run.steps) ? run.steps : [];
+        const evidenceSteps = steps
+          .map((step, index) => ({ step, index }))
+          .filter((item) => String(item.step.name || "").startsWith("Search standards evidence for "));
+        const lines = [
+          "Evidence context actually available to the model",
+          "",
+          `Run: ${run.run_id || "n/a"}`,
+          `Created: ${run.created_at || "n/a"}`,
+          `Model: ${run.provider || "n/a"}:${run.model || "n/a"}`,
+          `Assessment: ${run.assessment_id || "n/a"} / Vendor: ${run.vendor_id || "n/a"}`,
+          "",
+          "How to read this:",
+          "Dense means Qdrant/vector search. Keyword means BM25-style keyword search. Graph means Neo4j/GraphRAG rows.",
+          "Only prompt-selected evidence was sent to the model. Retrieved-but-not-selected evidence was available to the retriever but not used in the model prompt.",
+          "",
+        ];
+        if (!evidenceSteps.length) {
+          lines.push("[No standards evidence search steps were stored in this run.]");
+          return lines.join("\n");
+        }
+        evidenceSteps.forEach(({ step, index }, itemIndex) => {
+          const output = step.output || {};
+          const promptEvidence = output.prompt_evidence || {};
+          const retrieved = Array.isArray(output.retrieved_chunks) ? output.retrieved_chunks : [];
+          const promptSources = Array.isArray(promptEvidence.prompt_sources) ? promptEvidence.prompt_sources : [];
+          const graphRows = Array.isArray(output.graph_context_rows) ? output.graph_context_rows : [];
+          const rawGraphRows = Number(output.raw_graph_row_count || 0);
+          const promptStep = nextPromptStep(steps, index);
+          const promptChars = promptStep?.output?.model_prompt?.total_characters_sent_to_model;
+          const selectedIds = new Set(promptSources.map((source) => source.chunk_id || source.source_id).filter(Boolean));
+          const methodByChunk = retrievalMethodMap(retrieved);
+          const retrievedCounts = countBy(retrieved, (chunk) => chunk.retrieval_method || "unknown");
+          const selectedCounts = countBy(promptSources, (source) => methodByChunk.get(source.chunk_id) || source.retrieval_method || "unknown");
+          lines.push(`${itemIndex + 1}. ${step.name || "Evidence search"}`);
+          lines.push(`Purpose: ${friendlyStepDescription(step.name || "", step.explanation || "")}`);
+          lines.push(`Prompt size sent to model: ${promptChars ? `${formatNumber(promptChars)} characters` : "not recorded"}`);
+          lines.push(`Retrieved evidence: ${retrieved.length} total (${formatCountMap(retrievedCounts)})`);
+          lines.push(`Prompt-selected evidence: ${promptSources.length || promptEvidence.prompt_source_count || 0} total (${formatCountMap(selectedCounts)})`);
+          lines.push(`Graph/Neo4j: ${rawGraphRows} raw rows returned, ${graphRows.length} rows sent to model prompt`);
+          if (rawGraphRows && !graphRows.length) {
+            lines.push("Graph effect: Neo4j returned candidate rows, but the filter did not consider them clean or relevant enough for the model prompt. The final answer for this step was therefore based on dense/keyword text evidence, not graph rows.");
+          } else if (graphRows.length) {
+            lines.push("Graph effect: selected graph rows were sent to the model and could influence the answer.");
+          } else {
+            lines.push("Graph effect: no graph context influenced this step.");
+          }
+          lines.push("");
+          lines.push("Prompt-selected sources sent to the model:");
+          if (!promptSources.length) {
+            lines.push("- [None selected]");
+          } else {
+            promptSources.forEach((source) => {
+              lines.push(formatEvidenceSource(source, methodByChunk.get(source.chunk_id) || source.retrieval_method || "unknown"));
+            });
+          }
+          const notSelected = retrieved.filter((chunk) => !selectedIds.has(chunk.chunk_id || chunk.source_id)).slice(0, 4);
+          if (notSelected.length) {
+            lines.push("");
+            lines.push("Retrieved but not sent to the model:");
+            notSelected.forEach((source) => {
+              lines.push(formatEvidenceSource(source, source.retrieval_method || "unknown"));
+            });
+          }
+          if (graphRows.length) {
+            lines.push("");
+            lines.push("Graph rows sent to the model:");
+            graphRows.slice(0, 8).forEach((row, rowIndex) => {
+              lines.push(`- G${rowIndex + 1}: ${compactGraphRow(row)}`);
+            });
+          }
+          lines.push("");
+        });
+        return lines.join("\n");
+      }
+
+      function nextPromptStep(steps, startIndex) {
+        return steps.slice(startIndex + 1).find((step) => String(step.name || "").startsWith("Prepare model prompt for "));
+      }
+
+      function retrievalMethodMap(retrieved) {
+        const map = new Map();
+        retrieved.forEach((chunk) => {
+          if (chunk.chunk_id) map.set(chunk.chunk_id, chunk.retrieval_method || "unknown");
+        });
+        return map;
+      }
+
+      function countBy(items, keyFn) {
+        return items.reduce((counts, item) => {
+          const key = keyFn(item) || "unknown";
+          counts[key] = (counts[key] || 0) + 1;
+          return counts;
+        }, {});
+      }
+
+      function formatCountMap(counts) {
+        const entries = Object.entries(counts || {}).filter((entry) => entry[1]);
+        if (!entries.length) return "none";
+        return entries.map(([key, value]) => `${key}: ${value}`).join(", ");
+      }
+
+      function formatEvidenceSource(source, method) {
+        const metadata = source.metadata || {};
+        const score = source.score === undefined || source.score === null ? "n/a" : Number(source.score).toFixed(6);
+        const sourceName = source.source || metadata.source_path || metadata.filename || "unknown source";
+        const control = metadata.control_id ? `control ${metadata.control_id}` : "no control id";
+        const page = metadata.page_or_section ? `page/section ${metadata.page_or_section}` : "no page/section";
+        const why = source.why_selected ? ` Why selected: ${source.why_selected}` : "";
+        const previewText = source.text_preview || source.text || "";
+        const preview = previewText ? `\n  ${previewText}` : "";
+        return `- ${source.source_id || source.id || "source"} [${method}] score ${score}; ${control}; ${page}; ${sourceName}.${why}${preview}`;
+      }
+
+      function compactGraphRow(row) {
+        const text = JSON.stringify(row);
+        return text.length > 500 ? `${text.slice(0, 500)} [...]` : text;
       }
 
       function setBusy(busy, text) {
@@ -2004,6 +2343,7 @@
           <strong>Current run result</strong>
           <button class="secondary" type="button" onclick="expandFinalResult()">View JSON</button>
           <button class="secondary" type="button" onclick="openStorylineReport()">Storyline</button>
+          <button class="secondary" type="button" onclick="openEvidenceReport()">Evidence</button>
           <button class="secondary" type="button" onclick="openCodexReviewPacket()">Codex review packet</button>
         `;
       }
@@ -2015,6 +2355,9 @@
       window.estimateCost = estimateCost;
       window.expandFinalResult = expandFinalResult;
       window.openStorylineReport = openStorylineReport;
+      window.openEvidenceReport = openEvidenceReport;
+      window.closeEvidenceInline = closeEvidenceInline;
+      window.handleQuestionnaireMessage = handleQuestionnaireMessage;
       window.openCodexReviewPacket = openCodexReviewPacket;
       window.resetPacketToSample = resetPacketToSample;
       providerEl.addEventListener("change", configureModels);
@@ -2037,17 +2380,25 @@
       failureModalEl.addEventListener("click", (event) => {
         if (event.target === failureModalEl) closeFailureModal();
       });
-      document.querySelector("#applyDbForm").addEventListener("click", () => {
-        applyDbFormToPacket();
-      });
-      document.querySelector("#saveDbScenario").addEventListener("click", () => {
-        const packet = applyDbFormToPacket();
-        window.localStorage.setItem(savedScenarioKey, JSON.stringify(packet));
-        statusEl.textContent = "Saved this simulated DB scenario in the browser.";
-      });
-      document.querySelector("#resetDbScenario").addEventListener("click", () => {
-        resetPacketToSample();
-      });
+      const inlineApplyDbFormEl = document.querySelector("#applyDbForm");
+      if (inlineApplyDbFormEl) inlineApplyDbFormEl.addEventListener("click", () => applyDbFormToPacket());
+      const inlineAddQuestionEl = document.querySelector("#addQuestion");
+      if (inlineAddQuestionEl) inlineAddQuestionEl.addEventListener("click", () => addQuestion());
+      const inlineSaveQuestionnaireEl = document.querySelector("#saveQuestionnaire");
+      if (inlineSaveQuestionnaireEl) inlineSaveQuestionnaireEl.addEventListener("click", () => saveQuestionnaire());
+      const inlineLoadQuestionnaireEl = document.querySelector("#loadQuestionnaire");
+      if (inlineLoadQuestionnaireEl) inlineLoadQuestionnaireEl.addEventListener("click", () => loadSavedQuestionnaire());
+      const inlineResetDbScenarioEl = document.querySelector("#resetDbScenario");
+      if (inlineResetDbScenarioEl) inlineResetDbScenarioEl.addEventListener("click", () => resetQuestionnaireDefaults());
+      const inlineClearQuestionnaireEl = document.querySelector("#clearQuestionnaire");
+      if (inlineClearQuestionnaireEl) inlineClearQuestionnaireEl.addEventListener("click", () => clearQuestionnaire());
+      if (dbFormEl) {
+        dbFormEl.addEventListener("click", (event) => {
+          const button = event.target.closest("[data-remove-question]");
+          if (!button) return;
+          removeQuestion(Number(button.dataset.removeQuestion));
+        });
+      }
       packetEl.addEventListener("change", () => {
         try {
           applyPacketJson(packetEl.value, "Updated the optional form from the JSON.");
@@ -2055,10 +2406,14 @@
           statusEl.innerHTML = `<span class="warning">${escapeHtml(error.message)}</span>`;
         }
       });
-      dbFormEl.addEventListener("input", () => {
-        dbFormDirty = true;
-        clearCostEstimate();
-      });
+      if (dbFormEl) {
+        dbFormEl.addEventListener("input", () => {
+          dbFormDirty = true;
+          clearCostEstimate();
+        });
+      }
+      window.addEventListener("message", handleQuestionnaireMessage);
+      window.addEventListener("storage", handleQuestionnaireStorage);
       document.querySelector("#refreshRuns").addEventListener("click", refreshRuns);
       loadSample().then(async () => {
         await loadLocalOpenAiKey();

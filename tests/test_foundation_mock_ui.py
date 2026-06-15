@@ -55,6 +55,15 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "Final Result Contract" not in response.text
     assert "formatStorylineReport" in response.text
     assert "Saved run storyline" in response.text
+    assert "Saved run evidence" in response.text
+    assert "Evidence context actually available to the model" in response.text
+    assert "evidenceInline" in response.text
+    assert "showEvidenceInline" in response.text
+    assert "closeEvidenceInline" in response.text
+    assert "Graph/Neo4j" in response.text
+    assert "Retrieved but not sent to the model" in response.text
+    assert "formatEvidenceReport" in response.text
+    assert "openEvidenceReport" in response.text
     assert "buildCodexReviewPacket" in response.text
     assert "Development-only independent quality review" in response.text
     assert "failureModal" in response.text
@@ -70,10 +79,15 @@ def test_foundation_mock_ui_is_served() -> None:
     assert "packet-state" in response.text
     assert 'href="/mock/foundation/packet-editor"' in response.text
     assert '<textarea id="packet"></textarea>' not in response.text
-    assert "Optional simulated DB input form" in response.text
-    assert "business context manifest" in response.text
-    assert "Apply form to JSON" in response.text
-    assert "Save scenario" in response.text
+    assert "Populate questionnaire" in response.text
+    assert "/mock/foundation/questionnaire" in response.text
+    assert 'target="foundationQuestionnaireEditor"' in response.text
+    assert "foundationMock.savedQuestionnaire" in response.text
+    assert "openQuestionnaireBuilder" in response.text
+    assert "foundation-questionnaire-saved" in response.text
+    assert "handleQuestionnaireMessage" in response.text
+    assert "handleQuestionnaireStorage" in response.text
+    assert "useSavedQuestionnairePacket" in response.text
     assert "openPreview" in response.text
     assert "Expand" in response.text
 
@@ -100,6 +114,29 @@ def test_foundation_packet_editor_ui_is_served() -> None:
     assert "Save for workflow" in response.text
     assert "Reset initial content" in response.text
     assert "foundationMock.savedDbScenario" in response.text
+
+
+def test_foundation_questionnaire_editor_ui_is_served() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/mock/foundation/questionnaire-editor")
+
+    assert response.status_code == 200
+    assert "User Questionnaire Editor" in response.text
+    assert ">Save<" in response.text
+    assert ">Load<" in response.text
+    assert ">Erase<" in response.text
+    assert ">Default values<" in response.text
+    assert "Add question" in response.text
+    assert "Back to workflow" in response.text
+    assert "Remove" in response.text
+    assert "foundationMock.savedQuestionnaire" in response.text
+    assert "foundation-questionnaire-saved" in response.text
+    assert "The workflow page will use this questionnaire for the next run" in response.text
+
+    alias_response = client.get("/mock/foundation/questionnaire")
+    assert alias_response.status_code == 200
+    assert "User Questionnaire Editor" in alias_response.text
 
 
 def test_local_openai_key_cache_lifecycle(tmp_path, monkeypatch) -> None:

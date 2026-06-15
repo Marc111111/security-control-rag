@@ -413,6 +413,57 @@ The browser now has a `Storyline report` button beside the final JSON contract. 
 have a Storyline action. The readable report is rendered from `final_result.storyline_report`; it is
 not separately generated in the browser, so it cannot drift from the API result.
 
+## 2026-06-15 Evidence Visibility For Model Comparison
+
+Saved runs and the current completed run now include an `Evidence` action in the browser UI. This
+renders a plain-language evidence report inline in the result panel, with an `Expand` button for the
+full text. The report shows, for each standards search step:
+
+- how many chunks were retrieved;
+- which retrieved chunks were selected for the model prompt;
+- whether the selected evidence came from dense/Qdrant search, keyword/BM25 search, or graph rows;
+- how many raw Neo4j/GraphRAG rows were returned;
+- how many graph rows were actually sent to the model prompt;
+- retrieved-but-not-selected evidence, so reviewers can see what was deliberately withheld.
+
+This distinction is important for model comparisons. In the reviewed `gpt-5.4-mini`, `gpt-5.4`,
+and `qwen3:14b` runs, Qdrant and keyword evidence reached the prompt, but Neo4j returned raw rows
+that were filtered out before prompting. The UI must therefore avoid implying GraphRAG influenced a
+run unless graph rows were actually included in the model prompt.
+
+## 2026-06-15 Questionnaire Builder Popout
+
+The left panel now includes a `Populate questionnaire` button. It opens
+`/mock/foundation/questionnaire` in a popout window. The questionnaire editor must not be an
+inline accordion on the workflow screen.
+
+The popout starts from the default sample packet from `/api/mock/foundation-packet`. It has general
+vendor/tier context at the top and editable questionnaire questions below. Each question includes
+question text, answer, compliance, maturity, comments, evidence descriptions, and linked control
+metadata.
+
+Required button behavior:
+
+- `Add question` appends a blank questionnaire result with control metadata fields;
+- each question has a `Remove` action;
+- `Save` stores the current full packet in browser local storage under
+  `foundationMock.savedQuestionnaire` and `foundationMock.savedDbScenario`;
+- `Save` also sends the saved packet back to the opener with the
+  `foundation-questionnaire-saved` message;
+- the workflow page also listens for browser storage changes on `foundationMock.savedQuestionnaire`;
+- the workflow page must load the saved packet into the hidden workflow input immediately, so the
+  next workflow run uses exactly the saved questionnaire;
+- `Load` restores the last locally saved user questionnaire into the editor;
+- `Default values` restores the default sample values in the editor;
+- `Erase` blanks vendor/tier context and removes all questions. It affects the workflow only after
+  the user presses `Save`.
+- `Back to workflow` returns to the main workflow page. If a browser opens the editor in the same
+  tab instead of a popout, saving and then going back still makes the workflow load the saved
+  questionnaire.
+
+This remains a mock PostgreSQL adapter. The production adapter can later replace the packet source,
+but the downstream workflow continues to consume the normalized packet contract.
+
 ## Known Risks And Improvements
 
 - LLM output validation now exists for the complete-assessment risk-answer and final-paragraph
